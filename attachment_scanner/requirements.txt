@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+pymupdf
+pillow
+python-docx
+pydantic
+python-magic
+pikepdf
+pdfminer
+oletools
+pefile
+py7zr
+yara-python
+requests
