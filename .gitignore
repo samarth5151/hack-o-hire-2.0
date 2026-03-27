@@ -15,4 +15,5 @@ models/
 Thumbs.db
 
 # Logs
-*.log
+*.logsandbox/uploads/*.gguf
+sandbox/uploads/*.bin
