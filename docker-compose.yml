@@ -204,6 +204,7 @@ services:
       IMAP_MAILBOX: "INBOX"
       MAILHOG_URL: "http://mailhog:8025"
       POLL_INTERVAL: "10"
+      OLLAMA_HOST: "http://sandbox-ollama:11434"
     depends_on:
       postgres:
         condition: service_healthy

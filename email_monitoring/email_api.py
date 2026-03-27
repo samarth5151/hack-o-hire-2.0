@@ -103,6 +103,293 @@ def analyze_email_threat(payload: EmailThreatRequest):
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Full Phishing Analysis — all individual scores for the phishing tab
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PhishingAnalysisRequest(BaseModel):
+    from_name:   str = Field(default="", description="Sender display name")
+    from_email:  str = Field(default="", description="Sender email address")
+    reply_to:    str = Field(default="", description="Reply-To header value")
+    subject:     str = Field(default="", description="Email subject line")
+    raw_headers: str = Field(default="", description="Raw email headers block")
+    body:        str = Field(default="", description="Plain-text or HTML email body")
+
+
+@app.post("/analyze/phishing")
+def analyze_phishing_full(payload: PhishingAnalysisRequest):
+    """
+    Full phishing analysis pipeline — returns all individual risk scores.
+
+    Runs in parallel:
+      1. DistilBERT score     — fine-tuned BERT phishing classifier (bert_phishing)
+      2. RoBERTa / ML score   — llama:latest mimicking ML model reasoning
+      3. Rule-based check     — 15+ deterministic phishing rules with weights
+      4. AI-text probability  — llama:latest AI-generated content detection
+      5. Header analysis      — SPF/DKIM/DMARC + From/Reply-To mismatches
+      6. LLM threat analysis  — llama:latest specific threat extraction
+      7. Credential leakage   — regex + NER sensitive data extraction
+
+    Returns all scores + overall composite score.
+    """
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    t0      = time.time()
+    body    = payload.body
+    subject = payload.subject
+    sender  = payload.from_email or payload.from_name
+
+    results = {}
+
+    # ── 1. DistilBERT score ─────────────────────────────────────────────────
+    def _run_distilbert():
+        try:
+            from bert_detector import DistilBertEmailDetector
+            det  = DistilBertEmailDetector()
+            text = f"{subject}\n\n{body}"
+            res  = det.predict(text)
+            # Parse confidence percentage
+            raw_conf = res.get("confidence", "0%")
+            if isinstance(raw_conf, str):
+                conf_f = float(raw_conf.strip("%"))
+            else:
+                conf_f = float(raw_conf) * 100 if float(raw_conf) <= 1 else float(raw_conf)
+            prob_str = res.get("probabilities", {}).get("phishing", "0%")
+            if isinstance(prob_str, str):
+                phish_pct = float(prob_str.strip("%"))
+            else:
+                phish_pct = float(prob_str) * 100 if float(prob_str) <= 1 else float(prob_str)
+            return {
+                "score":       round(phish_pct, 1),
+                "label":       res.get("label", "legitimate"),
+                "confidence":  round(conf_f, 1),
+                "risk_level":  res.get("risk_level", "LOW RISK 🟢"),
+                "note":        res.get("note", ""),
+                "model":       res.get("model", "distilbert-finetuned"),
+                "available":   True,
+            }
+        except Exception as exc:
+            return {"score": 0, "label": "unknown", "confidence": 0,
+                    "risk_level": "UNKNOWN", "note": str(exc),
+                    "model": "distilbert-finetuned", "available": False, "error": str(exc)}
+
+    # ── 2. RoBERTa / ML score via llama:latest ──────────────────────────────
+    def _run_roberta():
+        try:
+            from llama_analyzer import get_roberta_score
+            return get_roberta_score(body, subject, sender)
+        except Exception as exc:
+            return {"score": 0, "label": "unknown", "confidence": 0,
+                    "key_features": [], "reasoning": "", "model": "llama:latest",
+                    "available": False, "error": str(exc)}
+
+    # ── 3. Rule-based check ─────────────────────────────────────────────────
+    def _run_rules():
+        try:
+            from rule_based_checker import check_email
+            return check_email(
+                body=body, subject=subject,
+                from_email=payload.from_email,
+                from_name=payload.from_name,
+                reply_to=payload.reply_to,
+                headers=payload.raw_headers,
+            )
+        except Exception as exc:
+            return {"score": 0, "triggered_rules": [], "rule_count": 0,
+                    "severity": "LOW", "error": str(exc)}
+
+    # ── 4. AI-text probability via llama:latest ──────────────────────────────
+    def _run_ai_text():
+        try:
+            from llama_analyzer import get_ai_text_probability
+            return get_ai_text_probability(body)
+        except Exception as exc:
+            return {"score": 0, "probability": 0.0, "verdict": "unknown",
+                    "ai_indicators": [], "model": "llama:latest",
+                    "available": False, "error": str(exc)}
+
+    # ── 5. Header analysis ──────────────────────────────────────────────────
+    def _run_header():
+        try:
+            headers_raw = payload.raw_headers.lower()
+            issues      = []
+            score       = 0
+
+            # SPF check
+            if "spf=pass" in headers_raw:
+                spf = "pass"
+            elif "spf=fail" in headers_raw or "spf=softfail" in headers_raw:
+                spf = "fail"; score += 25; issues.append("SPF authentication failed")
+            elif "spf=neutral" in headers_raw:
+                spf = "neutral"; score += 10
+            else:
+                spf = "unknown"; score += 5
+
+            # DKIM check
+            if "dkim=pass" in headers_raw:
+                dkim = "pass"
+            elif "dkim=fail" in headers_raw:
+                dkim = "fail"; score += 25; issues.append("DKIM signature invalid")
+            else:
+                dkim = "unknown"; score += 5
+
+            # DMARC check
+            if "dmarc=pass" in headers_raw:
+                dmarc = "pass"
+            elif "dmarc=fail" in headers_raw:
+                dmarc = "fail"; score += 20; issues.append("DMARC policy failed")
+            else:
+                dmarc = "unknown"; score += 5
+
+            # From / Reply-To mismatch
+            from_domain_mismatch = False
+            if payload.from_email and payload.reply_to:
+                try:
+                    fd = payload.from_email.split("@")[-1].lower().strip(">")
+                    rd = payload.reply_to.split("@")[-1].lower().strip(">")
+                    from_domain_mismatch = (fd != rd)
+                    if from_domain_mismatch:
+                        score += 20
+                        issues.append(f"Reply-To domain ({rd}) differs from From domain ({fd})")
+                except Exception:
+                    pass
+
+            # Display name vs domain mismatch
+            name_domain_mismatch = False
+            if payload.from_name and payload.from_email:
+                import re as _re
+                known = ["paypal","microsoft","apple","amazon","netflix","google","facebook","bank","chase","wells","citi","support","security","helpdesk"]
+                name_l  = payload.from_name.lower()
+                email_l = payload.from_email.lower()
+                for brand in known:
+                    if brand in name_l and brand not in email_l:
+                        name_domain_mismatch = True
+                        score += 15
+                        issues.append(f"Display name '{payload.from_name}' impersonates brand not in sender domain")
+                        break
+
+            # Suspicious received headers
+            if payload.raw_headers:
+                import re as _re
+                suspicious_tlds = [".xyz", ".tk", ".ml", ".ga", ".cf", ".gq"]
+                for tld in suspicious_tlds:
+                    if tld in headers_raw:
+                        score += 10
+                        issues.append(f"Suspicious TLD '{tld}' found in headers")
+                        break
+
+            score = min(score, 100)
+            return {
+                "score":                score,
+                "spf":                  spf,
+                "dkim":                 dkim,
+                "dmarc":                dmarc,
+                "from_domain_mismatch": from_domain_mismatch,
+                "name_domain_mismatch": name_domain_mismatch,
+                "issues":               issues,
+            }
+        except Exception as exc:
+            return {"score": 0, "spf": "unknown", "dkim": "unknown", "dmarc": "unknown",
+                    "from_domain_mismatch": False, "name_domain_mismatch": False,
+                    "issues": [], "error": str(exc)}
+
+    # ── 6. LLM Threat Analysis via llama:latest ──────────────────────────────
+    def _run_threats():
+        try:
+            from llama_analyzer import get_threat_analysis
+            return get_threat_analysis(body, subject, sender)
+        except Exception as exc:
+            return {"threat_type": "UNKNOWN", "urgency_level": "LOW",
+                    "specific_threats": [], "social_engineering_tactics": [],
+                    "summary": "", "risk_score": 0, "model": "llama:latest",
+                    "available": False, "error": str(exc)}
+
+    # ── 7. Credential leakage ───────────────────────────────────────────────
+    def _run_credentials():
+        try:
+            from sensitive_data_extractor import extract_sensitive_data
+            return extract_sensitive_data(subject=subject, body=body)
+        except Exception as exc:
+            return {"extracted_emails": [], "extracted_phones": [],
+                    "extracted_account_numbers": [], "extracted_names": [],
+                    "sensitive_data_found": False, "error": str(exc)}
+
+    # ── Run all modules in parallel ─────────────────────────────────────────
+    task_map = {
+        "distilbert":    _run_distilbert,
+        "roberta_ml":    _run_roberta,
+        "rule_based":    _run_rules,
+        "ai_text":       _run_ai_text,
+        "header":        _run_header,
+        "llm_threats":   _run_threats,
+        "credentials":   _run_credentials,
+    }
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(fn): key for key, fn in task_map.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result(timeout=60)
+            except Exception as e:
+                results[key] = {"error": str(e)}
+
+    # ── Compute overall score ────────────────────────────────────────────────
+    bert_score   = float(results.get("distilbert",  {}).get("score",       0))
+    ml_score     = float(results.get("roberta_ml",  {}).get("score",       0))
+    rule_score   = float(results.get("rule_based",  {}).get("score",       0))
+    ai_score     = float(results.get("ai_text",     {}).get("score",       0))
+    header_score = float(results.get("header",      {}).get("score",       0))
+    threat_score = float(results.get("llm_threats", {}).get("risk_score",  0))
+
+    # Weighted combination
+    overall = (
+        bert_score   * 0.30 +
+        ml_score     * 0.25 +
+        rule_score   * 0.20 +
+        header_score * 0.15 +
+        ai_score     * 0.05 +
+        threat_score * 0.05
+    )
+    overall = round(min(overall, 100.0), 1)
+
+    # Boost if credentials detected
+    cred = results.get("credentials", {})
+    if cred.get("sensitive_data_found"):
+        overall = min(overall + 10, 100)
+
+    if overall >= 70:
+        risk_level     = "HIGH"
+        risk_emoji     = "🔴"
+        recommendation = "BLOCK"
+    elif overall >= 40:
+        risk_level     = "MEDIUM"
+        risk_emoji     = "🟡"
+        recommendation = "REVIEW"
+    else:
+        risk_level     = "LOW"
+        risk_emoji     = "🟢"
+        recommendation = "ALLOW"
+
+    processing_ms = round((time.time() - t0) * 1000)
+
+    return JSONResponse(content={
+        "overall_score":      overall,
+        "risk_level":         risk_level,
+        "risk_emoji":         risk_emoji,
+        "recommendation":     recommendation,
+        "distilbert":         results.get("distilbert",  {}),
+        "roberta_ml":         results.get("roberta_ml",  {}),
+        "rule_based":         results.get("rule_based",  {}),
+        "ai_text":            results.get("ai_text",     {}),
+        "header_analysis":    results.get("header",      {}),
+        "llm_threat_analysis":results.get("llm_threats", {}),
+        "credentials":        results.get("credentials", {}),
+        "processing_ms":      processing_ms,
+    })
+
+
 @app.post("/analyze-email")
 def analyze_email_full_pipeline(payload: EmailThreatRequest):
     """
@@ -215,6 +502,96 @@ def download_attachment(email_id: int, att_id: int):
 
 
 # ── Full email security analysis ──────────────────────────────────────────────
+
+@app.post("/emails/{email_id}/analyze/full")
+def analyze_email_full_pipeline(email_id: int):
+    """
+    🔥 Full 7-layer analysis pipeline — mirrors Streamlit app.py exactly.
+
+    Pipeline:
+      1. Attachment extraction + Voice deepfake scan
+      2. Rule-based fraud check
+      3. Metadata extraction (URLs & Credentials)
+      4. LLM deep analysis (Ollama qwen3:8b)
+      5. AI-generated content detection
+      6. ML score fusion (RoBERTa → DistilBERT → heuristic)
+      7. n8n incident webhook (HIGH/CRITICAL only)
+
+    Returns unified JSON with: fused_score_details, unified_score,
+    fraud_analysis (llm_based), ai_detection, credential_scan,
+    n8n_incident, routing.
+    """
+    row = get_email(email_id)
+    if not row:
+        raise HTTPException(404, "Email not found")
+
+    # Parse JSONB fields
+    for field in ("headers", "urls", "analysis", "attachments"):
+        if isinstance(row.get(field), str):
+            try:
+                row[field] = json.loads(row[field])
+            except Exception:
+                pass
+
+    # Build a minimal email.message object from row fields so
+    # attachment_analyzer.analyze_email() can use it
+    import email as _email_lib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    msg = MIMEMultipart()
+    msg['From']     = row.get("sender", "")
+    msg['To']       = row.get("receiver", "")
+    msg['Subject']  = row.get("subject", "")
+    if row.get("reply_to"):
+        msg['Reply-To'] = row["reply_to"]
+    msg.attach(MIMEText(row.get("body_text", "") or "", 'plain'))
+    if row.get("body_html"):
+        msg.attach(MIMEText(row["body_html"], 'html'))
+
+    # Add attachment bytes from DB if available
+    atts_db = row.get("attachments") or []
+    for att_meta in atts_db:
+        att_content = get_attachment_content(att_meta.get("id", -1))
+        if att_content and att_content.get("content"):
+            from email.mime.base import MIMEBase
+            from email import encoders as _encoders
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(bytes(att_content["content"]))
+            _encoders.encode_base64(part)
+            part.add_header('Content-Disposition',
+                            f'attachment; filename="{att_meta.get("filename","file")}"')
+            msg.attach(part)
+
+    try:
+        # Run the full Streamlit pipeline
+        src_dir = str(_HERE / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        from attachment_analyzer import analyze_email as _full_analyze
+        result = _full_analyze(
+            email_message=msg,
+            sender=row.get("sender", ""),
+            subject=row.get("subject", ""),
+            body=row.get("body_text", ""),
+        )
+
+        # Persist the unified score back to DB for caching
+        unified = result.get("unified_score", {})
+        update_email_analysis(
+            email_id,
+            result,
+            unified.get("final_score", 0),
+            unified.get("tier", "UNKNOWN"),
+        )
+
+        mark_read(email_id)
+        return JSONResponse(content=result)
+
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Full pipeline failed: {exc}")
+
 
 @app.post("/emails/{email_id}/analyze")
 def analyze_email_endpoint(email_id: int, background_tasks: BackgroundTasks):
@@ -463,11 +840,42 @@ def _run_static_attachment_scan(content: bytes, filename: str) -> dict:
 
 
 def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dict:
-    """Deep content analysis: extract text and run full pipeline."""
+    """Deep content analysis: extract text and run full pipeline.
+    For audio files: calls the voice-scanner container API.
+    For documents: extracts text and runs llama:latest phishing analysis.
+    """
     t0 = time.time()
     result = {"filename": filename, "scan_type": "deep"}
 
     ext = Path(filename).suffix.lower()
+
+    # ── Audio files: call voice-scanner API ────────────────────────────────
+    AUDIO_EXTS = {".wav", ".mp3", ".mp4", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".opus"}
+    if ext in AUDIO_EXTS:
+        try:
+            import requests as _req
+            files = {"file": (filename, content, "application/octet-stream")}
+            resp = _req.post(
+                "http://voice-scanner:8008/analyze",
+                files=files,
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                voice_data = resp.json()
+                result["voice_analysis"] = voice_data
+                result["risk_score"] = voice_data.get("risk_score", 0)
+                result["risk_tier"] = _score_to_tier(result["risk_score"])
+                result["processing_ms"] = round((time.time() - t0) * 1000)
+                return result
+            else:
+                result["voice_analysis"] = {"error": f"Voice scanner returned {resp.status_code}"}
+        except Exception as exc:
+            result["voice_analysis"] = {"error": f"Voice scanner unavailable: {exc}"}
+        result["risk_score"] = 0
+        result["risk_tier"] = "UNKNOWN"
+        result["processing_ms"] = round((time.time() - t0) * 1000)
+        return result
+
     extracted_text = _extract_text_from_bytes(content, filename)
 
     if not extracted_text:
@@ -517,14 +925,42 @@ def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dic
     except Exception:
         result["ai_detection"] = _fallback_ai_detect(extracted_text)
 
-    # Score
+    # ── LLM Deep Content Analysis via llama:latest ─────────────────────────────
+    # For PDF, Word, and text files: pass content to llama for full security analysis
+    DEEP_ANALYSIS_EXTS = {".pdf", ".doc", ".docx", ".txt", ".csv", ".log", ".rtf", ".odt"}
+    if ext in DEEP_ANALYSIS_EXTS and extracted_text.strip():
+        try:
+            sys.path.insert(0, str(_HERE / "src"))
+            from llama_analyzer import analyze_content_for_phishing
+            llama_result = analyze_content_for_phishing(
+                content=extracted_text[:4000],
+                filename=filename,
+            )
+            result["llm_analysis"] = llama_result
+        except Exception as exc:
+            result["llm_analysis"] = {
+                "phishing_score": 0,
+                "verdict": "UNKNOWN",
+                "credentials_found": [],
+                "links_found": [],
+                "sensitive_data": [],
+                "threats_detected": [],
+                "summary": f"LLM analysis unavailable: {exc}",
+                "model": "llama:latest",
+                "available": False,
+                "error": str(exc),
+            }
+
+    # Score — incorporate llm_analysis if available
     rule_score = result.get("fraud_check", {}).get("score", 0)
     url_max = max((u.get("risk_score_pct", 0) for u in url_results), default=0)
     cred_hits = result.get("credentials", {}).get("total_findings", 0)
-    overall = max(rule_score, int(url_max * 0.6))
+    llm_score = result.get("llm_analysis", {}).get("phishing_score", 0)
+
+    overall = max(rule_score, int(url_max * 0.6), llm_score)
     if cred_hits > 0:
         overall = max(overall, 50 + min(cred_hits * 5, 40))
-    result["risk_score"] = overall
+    result["risk_score"] = min(overall, 100)
     result["risk_tier"] = _score_to_tier(overall)
     result["processing_ms"] = round((time.time() - t0) * 1000)
 

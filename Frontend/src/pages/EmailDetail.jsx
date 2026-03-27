@@ -368,8 +368,11 @@ function AttachmentResult({ result, scanType }) {
   }
 
   if (scanType === 'deep') {
+    const llm = result.llm_analysis
+    const isAudio = result.voice_analysis || result.audio_scan
     return (
       <div className="space-y-3">
+        {/* Header score */}
         <div className="flex items-center gap-3">
           <ScoreMeter score={result.risk_score || 0} size={56} />
           <div>
@@ -378,6 +381,116 @@ function AttachmentResult({ result, scanType }) {
           </div>
         </div>
 
+        {/* ── LLM Deep Analysis (llama:latest) ── */}
+        {llm && (
+          <div className="rounded-xl border border-violet-200 overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-violet-50 border-b border-violet-100">
+              <RiSparklingLine className="text-violet-500 text-sm" />
+              <span className="text-[12px] font-bold text-violet-700 uppercase tracking-wide">llama:latest Deep Analysis</span>
+              {llm.available === false ? (
+                <span className="ml-auto text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">Offline</span>
+              ) : (
+                <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  llm.verdict === 'PHISHING' || llm.verdict === 'MALWARE' ? 'bg-red-50 text-red-700 border-red-200'
+                  : llm.verdict === 'SUSPICIOUS' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>{llm.verdict || 'CLEAN'}</span>
+              )}
+            </div>
+            <div className="px-4 py-3 space-y-3">
+              <ScoreBar label="LLM Phishing Score" value={llm.phishing_score || 0}
+                color={(llm.phishing_score || 0) >= 60 ? 'bg-red-500' : (llm.phishing_score || 0) >= 30 ? 'bg-amber-500' : 'bg-emerald-500'}
+              />
+
+              {llm.summary && (
+                <div className="p-3 bg-sky-50 border border-sky-100 rounded-xl">
+                  <p className="text-[10px] font-bold text-sky-700 uppercase tracking-wide mb-1">LLM Summary</p>
+                  <p className="text-[12px] text-slate-700 leading-relaxed">{llm.summary}</p>
+                </div>
+              )}
+
+              {/* Credentials found by LLM */}
+              {llm.credentials_found?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-1.5">⚠ Credentials Found by LLM ({llm.credentials_found.length})</p>
+                  <div className="space-y-1">
+                    {llm.credentials_found.map((c, i) => (
+                      <div key={i} className="flex items-start gap-2 px-2 py-1.5 bg-amber-50 border border-amber-100 rounded-lg">
+                        <RiLockLine className="text-amber-500 text-xs mt-0.5 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold text-amber-700 uppercase">{c.type}</span>
+                          <p className="text-[11px] text-slate-700 font-mono break-all">{c.value}</p>
+                          {c.context && <p className="text-[10px] text-slate-500 italic">{c.context}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Links found by LLM */}
+              {llm.links_found?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Links Analyzed by LLM ({llm.links_found.length})</p>
+                  <div className="space-y-1">
+                    {llm.links_found.slice(0, 5).map((l, i) => (
+                      <div key={i} className={`flex items-start gap-2 px-2 py-1.5 rounded-lg border ${
+                        l.suspicious ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'
+                      }`}>
+                        <RiLinksLine className={`text-xs mt-0.5 flex-shrink-0 ${l.suspicious ? 'text-red-400' : 'text-emerald-400'}`} />
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-mono text-slate-700 break-all truncate">{l.url}</p>
+                          {l.reason && <p className="text-[10px] text-slate-500 italic">{l.reason}</p>}
+                        </div>
+                        {l.suspicious && <span className="text-[9px] font-bold text-red-600 flex-shrink-0 ml-auto">SUSPICIOUS</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Threats detected */}
+              {llm.threats_detected?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide mb-1">🚨 Threats Detected</p>
+                  {llm.threats_detected.map((t, i) => (
+                    <div key={i} className="flex items-start gap-2 py-0.5">
+                      <RiErrorWarningLine className="text-red-400 text-xs mt-0.5 flex-shrink-0" />
+                      <p className="text-[11px] text-red-700">{t}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Sensitive data */}
+              {llm.sensitive_data?.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  <p className="w-full text-[10px] font-bold text-slate-400 uppercase">Sensitive Data Types</p>
+                  {llm.sensitive_data.map((s, i) => <IndicatorChip key={i} text={s} level="warn" />)}
+                </div>
+              )}
+
+              {llm.available === false && llm.error && (
+                <p className="text-[10px] text-amber-600 italic">⚠ {llm.error}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Voice analysis results for audio deep scan */}
+        {result.voice_analysis && (
+          <div className="rounded-xl border border-rose-200 overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 border-b border-rose-100">
+              <RiVoiceprintLine className="text-rose-500 text-sm" />
+              <span className="text-[12px] font-bold text-rose-700 uppercase tracking-wide">Voice Scanner Deep Analysis</span>
+            </div>
+            <div className="px-4 py-3">
+              <pre className="text-[10px] text-slate-600 overflow-auto max-h-32">{JSON.stringify(result.voice_analysis, null, 2)}</pre>
+            </div>
+          </div>
+        )}
+
+        {/* Static sections (fraud indicators, credentials, URLs, AI detection) */}
         {result.fraud_check?.reasons?.length > 0 && (
           <div>
             <p className="text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wide">Fraud Indicators</p>
@@ -415,9 +528,10 @@ function AttachmentResult({ result, scanType }) {
           <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
             <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide mb-1">AI Detection</p>
             <p className="text-[12px] text-slate-700">
-              Probability: <strong>{Math.round((result.ai_detection.ai_generated_probability || 0) * 100)}%</strong>
-              {result.ai_detection.is_ai_generated && <span className="ml-2 text-amber-600 font-semibold">Likely AI-generated</span>}
+              Probability: <strong>{Math.round((result.ai_detection.ai_generated_probability || result.ai_detection.probability || 0) * 100)}%</strong>
+              {(result.ai_detection.is_ai_generated || result.ai_detection.verdict === 'definitely-ai') && <span className="ml-2 text-amber-600 font-semibold">Likely AI-generated</span>}
             </p>
+            {result.ai_detection.analysis && <p className="text-[11px] text-slate-500 mt-1">{result.ai_detection.analysis}</p>}
           </div>
         )}
       </div>
@@ -1021,6 +1135,54 @@ export default function EmailDetail({ emailId, onBack }) {
   const [loading, setLoading]       = useState(true)
   const [analyzing, setAnalyzing]   = useState(false)
   const [activeBodyTab, setActiveBodyTab] = useState('text')
+  const [fullAnalysis, setFullAnalysis]   = useState(null)
+  const [runningFull, setRunningFull]     = useState(false)
+  const [phishingScores, setPhishingScores] = useState(null)
+  const [runningPhishing, setRunningPhishing] = useState(false)
+
+  const runPhishingAnalysis = useCallback(async (emailData) => {
+    if (!emailData) return
+    setRunningPhishing(true)
+    try {
+      const res = await fetch('/api/email/analyze/phishing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_name:   emailData.sender_name || '',
+          from_email:  emailData.sender || '',
+          reply_to:    emailData.reply_to || '',
+          subject:     emailData.subject || '',
+          raw_headers: JSON.stringify(emailData.headers || {}),
+          body:        emailData.body_text || '',
+        }),
+      })
+      if (res.ok) {
+        setPhishingScores(await res.json())
+      }
+    } catch (e) {
+      console.warn('Phishing analysis error:', e)
+    } finally {
+      setRunningPhishing(false)
+    }
+  }, [])
+
+  const runFullPipeline = useCallback(async () => {
+    setRunningFull(true)
+    try {
+      const res = await fetch(`/api/email/emails/${emailId}/analyze/full`, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        setFullAnalysis(data)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        console.warn('Full pipeline error:', err)
+      }
+    } catch (e) {
+      console.warn('Full pipeline fetch error:', e)
+    } finally {
+      setRunningFull(false)
+    }
+  }, [emailId])
 
   const fetchEmail = useCallback(async () => {
     setLoading(true)
@@ -1064,6 +1226,13 @@ export default function EmailDetail({ emailId, onBack }) {
       runAnalysis()
     }
   }, [email, analysis, analyzing, runAnalysis])
+
+  // Auto-run phishing analysis after email is fetched
+  useEffect(() => {
+    if (email && !phishingScores && !runningPhishing) {
+      runPhishingAnalysis(email)
+    }
+  }, [email, phishingScores, runningPhishing, runPhishingAnalysis])
 
   if (loading) {
     return (
@@ -1231,12 +1400,27 @@ export default function EmailDetail({ emailId, onBack }) {
                   <RiShieldCheckLine className="text-sky-500 text-lg" />
                   <span className="text-[13px] text-slate-700 font-semibold">Analysis complete</span>
                   <span className="text-[11px] text-slate-400 ml-1">{analysis.processing_ms}ms</span>
-                  <button
-                    onClick={runAnalysis}
-                    className="ml-auto text-[11px] text-slate-400 hover:text-sky-500 flex items-center gap-1"
-                  >
-                    <RiRefreshLine /> Re-run
-                  </button>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      onClick={runAnalysis}
+                      className="text-[11px] text-slate-400 hover:text-sky-500 flex items-center gap-1"
+                    >
+                      <RiRefreshLine /> Re-run
+                    </button>
+                    <button
+                      onClick={runFullPipeline}
+                      disabled={runningFull}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                        runningFull
+                          ? 'bg-violet-100 text-violet-400 cursor-wait'
+                          : 'bg-gradient-to-r from-violet-500 to-sky-500 text-white hover:from-violet-600 hover:to-sky-600 shadow-sm'
+                      }`}
+                    >
+                      {runningFull
+                        ? <><motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}><RiLoader4Line /></motion.span> Running…</>
+                        : <><RiSparklingLine /> Full Pipeline (Ollama + ML)</>}
+                    </button>
+                  </div>
                 </>
               : <>
                   <RiShieldLine className="text-slate-400 text-lg" />
@@ -1255,63 +1439,388 @@ export default function EmailDetail({ emailId, onBack }) {
           <AnalysisSection
             icon={<RiSpam2Line />}
             title="Phishing & Malicious Content"
-            loading={analyzing && !analysis?.phishing}
+            loading={runningPhishing && !phishingScores}
             defaultOpen
-            badge={analysis?.phishing && (
-              <TierBadge tier={analysis.phishing.tier} />
+            badge={phishingScores && (
+              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                phishingScores.risk_level === 'HIGH'
+                  ? 'bg-red-50 text-red-700 border-red-200'
+                  : phishingScores.risk_level === 'MEDIUM'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}>
+                {phishingScores.risk_emoji} {phishingScores.risk_level}
+              </span>
             )}
           >
-            {analysis?.phishing ? (
-              <div className="space-y-4">
-                {/* Score grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: 'Risk Score',   value: `${analysis.phishing.risk_score}`, sub: '/100' },
-                    { label: 'Verdict',      value: analysis.phishing.verdict,           sub: ''    },
-                    { label: 'Tier',         value: analysis.phishing.tier,              sub: ''    },
-                    { label: 'Action',       value: analysis.phishing.outlook_action,    sub: ''    },
-                  ].map(({ label, value, sub }) => (
-                    <div key={label} className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
-                      <p className="text-[15px] font-bold text-slate-800 mt-0.5">{value}<span className="text-[10px] text-slate-400">{sub}</span></p>
-                    </div>
-                  ))}
-                </div>
+            {phishingScores ? (
+              <div className="space-y-5">
 
-                {/* Score breakdown */}
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Score Breakdown</p>
-                  <ScoreBar label="RoBERTa / ML Model"  value={Math.round((analysis.phishing.roberta_prob || 0) * 100)} color="bg-sky-500" delay={0.1} />
-                  <ScoreBar label="Rule-based Check"    value={Math.round(analysis.phishing.rule_score || 0)} color="bg-indigo-400" delay={0.2} />
-                  <ScoreBar label="AI-text Probability" value={Math.round((analysis.phishing.ai_prob || 0) * 100)} color="bg-violet-400" delay={0.3} />
-                  <ScoreBar label="Header Analysis"     value={analysis.phishing.header_score || 0} color="bg-cyan-500" delay={0.4} />
-                </div>
-
-                {/* Header flags */}
-                {analysis.phishing.header_flags?.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Header Flags</p>
-                    <div className="flex flex-wrap gap-1">
-                      {analysis.phishing.header_flags.map((f, i) => <IndicatorChip key={i} text={f} level="warn" />)}
-                    </div>
+                {/* ── Overall Score ── */}
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="flex-shrink-0">
+                    <ScoreMeter score={phishingScores.overall_score || 0} size={80} />
                   </div>
-                )}
+                  <div className="flex-1 space-y-1">
+                    <p className={`text-[16px] font-extrabold ${
+                      phishingScores.risk_level === 'HIGH' ? 'text-red-600'
+                      : phishingScores.risk_level === 'MEDIUM' ? 'text-amber-600'
+                      : 'text-emerald-600'
+                    }`}>
+                      {phishingScores.risk_emoji} {phishingScores.risk_level} RISK
+                    </p>
+                    <p className="text-[13px] text-slate-600 font-semibold">
+                      Recommendation: <span className="font-bold text-slate-800">{phishingScores.recommendation}</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400">Overall composite score from 6 models · {phishingScores.processing_ms}ms</p>
+                    <button
+                      onClick={() => runPhishingAnalysis(email)}
+                      className="mt-1 text-[10px] text-sky-500 hover:text-sky-700 flex items-center gap-1"
+                    >
+                      <RiRefreshLine /> Re-run
+                    </button>
+                  </div>
+                </div>
 
-                {/* Top indicators */}
-                {analysis.phishing.top_indicators?.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Top Indicators</p>
-                    <div className="flex flex-wrap gap-1">
-                      {analysis.phishing.top_indicators.map((ind, i) => (
-                        <IndicatorChip key={i} text={ind}
-                          level={analysis.phishing.tier === 'CRITICAL' ? 'danger' : analysis.phishing.tier === 'HIGH' ? 'warn' : 'info'}
+                {/* ── 1a. DistilBERT Score ── */}
+                {(() => {
+                  const db = phishingScores.distilbert || {}
+                  const isHigh = (db.score || 0) >= 60
+                  const isMed  = (db.score || 0) >= 30
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiCpuLine className="text-sky-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">DistilBERT Phishing Classifier</span>
+                        {db.available === false ? (
+                          <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">Fallback</span>
+                        ) : (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            isHigh ? 'bg-red-50 text-red-700 border-red-200'
+                            : isMed ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}>{db.label?.toUpperCase() || 'UNKNOWN'}</span>
+                        )}
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <ScoreBar label="Phishing Score" value={db.score || 0} color={isHigh ? 'bg-red-500' : isMed ? 'bg-amber-500' : 'bg-emerald-500'} />
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                          {[
+                            { label: 'Risk Level',  value: db.risk_level || '—' },
+                            { label: 'Confidence',  value: db.confidence != null ? `${db.confidence}%` : '—' },
+                            { label: 'Model',       value: db.model || 'distilbert-finetuned' },
+                          ].map(({ label, value }) => (
+                            <div key={label} className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                              <p className="text-[11px] font-bold text-slate-700 mt-0.5 truncate">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {db.note && <p className="text-[10px] text-slate-400 italic">{db.note}</p>}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* ── 1b. RoBERTa / ML (llama:latest) ── */}
+                {(() => {
+                  const ml = phishingScores.roberta_ml || {}
+                  const isHigh = (ml.score || 0) >= 60
+                  const isMed  = (ml.score || 0) >= 30
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiBrainLine className="text-violet-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">RoBERTa / ML Model <span className="text-[10px] text-slate-400 font-normal">(via llama:latest)</span></span>
+                        {ml.available === false ? (
+                          <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">Offline</span>
+                        ) : (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            isHigh ? 'bg-red-50 text-red-700 border-red-200'
+                            : isMed ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}>{ml.label?.toUpperCase() || 'UNKNOWN'}</span>
+                        )}
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <ScoreBar label="Phishing Score" value={ml.score || 0} color={isHigh ? 'bg-red-500' : isMed ? 'bg-amber-500' : 'bg-violet-500'} />
+                        {ml.reasoning && (
+                          <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">{ml.reasoning}</p>
+                        )}
+                        {ml.key_features?.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            <p className="w-full text-[10px] font-bold text-slate-400 uppercase">Key Features</p>
+                            {ml.key_features.map((f, i) => <IndicatorChip key={i} text={f} level="info" />)}
+                          </div>
+                        )}
+                        {ml.available === false && ml.error && (
+                          <p className="text-[10px] text-amber-600 italic">{ml.error}</p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* ── 1c. Rule-Based Check ── */}
+                {(() => {
+                  const rb = phishingScores.rule_based || {}
+                  const isHigh = rb.severity === 'CRITICAL' || rb.severity === 'HIGH'
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiBarChartLine className="text-indigo-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">Rule-Based Check</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          isHigh ? 'bg-red-50 text-red-700 border-red-200'
+                          : rb.severity === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}>{rb.severity || 'LOW'}</span>
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <ScoreBar label="Rule Score" value={rb.score || 0} color={isHigh ? 'bg-red-500' : rb.severity === 'MEDIUM' ? 'bg-amber-500' : 'bg-indigo-400'} />
+                        {rb.triggered_rules?.length > 0 ? (
+                          <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{rb.rule_count} rule(s) triggered</p>
+                            {rb.triggered_rules.map((rule, i) => (
+                              <div key={i} className={`flex items-start gap-2 px-2 py-1.5 rounded-lg ${
+                                rule.severity === 'High' ? 'bg-red-50 border border-red-100'
+                                : rule.severity === 'Medium' ? 'bg-amber-50 border border-amber-100'
+                                : 'bg-slate-50 border border-slate-100'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+                                  rule.severity === 'High' ? 'bg-red-500'
+                                  : rule.severity === 'Medium' ? 'bg-amber-500'
+                                  : 'bg-slate-400'
+                                }`} />
+                                <div>
+                                  <p className="text-[11px] font-semibold text-slate-700">{rule.name} <span className="text-[10px] text-slate-400">(+{rule.weight})</span></p>
+                                  <p className="text-[10px] text-slate-500">{rule.detail}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 py-1">
+                            <RiCheckboxCircleLine className="text-emerald-500" />
+                            <p className="text-[12px] text-emerald-600">No suspicious rules triggered</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* ── 1d. AI-Text Probability ── */}
+                {(() => {
+                  const ai = phishingScores.ai_text || {}
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiRobot2Line className="text-amber-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">AI-Text Probability <span className="text-[10px] text-slate-400 font-normal">(via llama:latest)</span></span>
+                        {ai.available === false ? (
+                          <span className="text-[10px] text-slate-500 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">Offline</span>
+                        ) : (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            ai.verdict === 'definitely-ai' ? 'bg-red-50 text-red-700 border-red-200'
+                            : ai.verdict === 'likely-ai' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}>{ai.verdict || 'unknown'}</span>
+                        )}
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <ScoreBar label="AI Probability" value={ai.score || 0}
+                          color={ai.verdict === 'definitely-ai' ? 'bg-red-500' : ai.verdict === 'likely-ai' ? 'bg-amber-500' : 'bg-emerald-500'}
                         />
-                      ))}
+                        {ai.analysis && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">{ai.analysis}</p>}
+                        {ai.ai_indicators?.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            <p className="w-full text-[10px] font-bold text-slate-400 uppercase">AI Indicators</p>
+                            {ai.ai_indicators.map((ind, i) => <IndicatorChip key={i} text={ind} level="warn" />)}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
 
-                <p className="text-[10px] text-slate-400">Model: {analysis.phishing.scorer_used} · {analysis.phishing.processing_ms}ms</p>
+                {/* ── 1e. Header Analysis ── */}
+                {(() => {
+                  const hdr = phishingScores.header_analysis || {}
+                  const isRisky = (hdr.score || 0) >= 25
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiServerLine className="text-cyan-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">Header Analysis <span className="text-[10px] text-slate-400 font-normal">(SPF / DKIM / DMARC)</span></span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          isRisky ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}>{isRisky ? 'Issues Found' : 'Clean'}</span>
+                      </div>
+                      <div className="px-4 py-3 space-y-2">
+                        <ScoreBar label="Header Risk" value={hdr.score || 0} color={isRisky ? 'bg-amber-500' : 'bg-emerald-500'} />
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                          {[
+                            { label: 'SPF',  value: hdr.spf  || 'unknown', ok: hdr.spf  === 'pass', bad: hdr.spf  === 'fail' },
+                            { label: 'DKIM', value: hdr.dkim || 'unknown', ok: hdr.dkim === 'pass', bad: hdr.dkim === 'fail' },
+                            { label: 'DMARC',value: hdr.dmarc|| 'unknown', ok: hdr.dmarc=== 'pass', bad: hdr.dmarc=== 'fail' },
+                          ].map(({ label, value, ok, bad }) => (
+                            <div key={label} className={`p-2 rounded-lg border text-center ${
+                              ok ? 'bg-emerald-50 border-emerald-200' : bad ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100'
+                            }`}>
+                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                              <p className={`text-[12px] font-bold mt-0.5 ${
+                                ok ? 'text-emerald-600' : bad ? 'text-red-600' : 'text-slate-500'
+                              }`}>{value.toUpperCase()}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {hdr.issues?.length > 0 && (
+                          <div className="space-y-1">
+                            {hdr.issues.map((issue, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <RiAlertLine className="text-amber-500 text-xs mt-0.5 flex-shrink-0" />
+                                <p className="text-[11px] text-amber-700">{issue}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {hdr.issues?.length === 0 && (
+                          <div className="flex items-center gap-2">
+                            <RiCheckboxCircleLine className="text-emerald-500" />
+                            <p className="text-[11px] text-emerald-600">No header authentication issues detected</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* ── 1f. LLM Threat Analysis ── */}
+                {(() => {
+                  const lt = phishingScores.llm_threat_analysis || {}
+                  if (!lt.threat_type) return null
+                  const isLegit = lt.threat_type === 'LEGITIMATE'
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiSparklingLine className="text-violet-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">LLM Threat Analysis <span className="text-[10px] text-slate-400 font-normal">(llama:latest)</span></span>
+                        {lt.available === false ? (
+                          <span className="text-[10px] text-slate-500 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">Offline</span>
+                        ) : (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            isLegit ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : ['PHISHING','SPEAR_PHISHING','BEC','CREDENTIAL_HARVEST','MALWARE'].includes(lt.threat_type)
+                            ? 'bg-red-50 text-red-700 border-red-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>{lt.threat_type}</span>
+                        )}
+                      </div>
+                      {lt.available !== false && (
+                        <div className="px-4 py-3 space-y-2">
+                          <ScoreBar label="Threat Risk Score" value={lt.risk_score || 0}
+                            color={isLegit ? 'bg-emerald-500' : (lt.risk_score || 0) >= 60 ? 'bg-red-500' : 'bg-amber-500'}
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+                              <p className="text-[9px] font-bold text-slate-400 uppercase">Urgency</p>
+                              <p className="text-[12px] font-bold text-slate-700 mt-0.5">{lt.urgency_level || '—'}</p>
+                            </div>
+                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+                              <p className="text-[9px] font-bold text-slate-400 uppercase">Impersonates</p>
+                              <p className="text-[12px] font-bold text-slate-700 mt-0.5 truncate">{lt.impersonated_entity || 'None'}</p>
+                            </div>
+                          </div>
+                          {lt.summary && (
+                            <p className="text-[12px] text-slate-700 bg-sky-50 border border-sky-100 rounded-xl px-3 py-2">{lt.summary}</p>
+                          )}
+                          {lt.specific_threats?.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Specific Threats Detected</p>
+                              {lt.specific_threats.map((t, i) => (
+                                <div key={i} className="flex items-start gap-2 py-0.5">
+                                  <RiErrorWarningLine className="text-red-400 text-xs mt-0.5 flex-shrink-0" />
+                                  <p className="text-[11px] text-red-700">{t}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {lt.social_engineering_tactics?.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              <p className="w-full text-[10px] font-bold text-slate-400 uppercase">Social Engineering Tactics</p>
+                              {lt.social_engineering_tactics.map((t, i) => <IndicatorChip key={i} text={t} level="warn" />)}
+                            </div>
+                          )}
+                          {lt.call_to_action && (
+                            <p className="text-[11px] text-slate-600">Call to Action: <strong>{lt.call_to_action}</strong></p>
+                          )}
+                        </div>
+                      )}
+                      {lt.available === false && (
+                        <div className="px-4 py-3">
+                          <p className="text-[11px] text-slate-400 italic">LLM unavailable — start Ollama to enable threat analysis.</p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* ── 1g. Credential Leakage (from phishing endpoint) ── */}
+                {(() => {
+                  const cred = phishingScores.credentials || {}
+                  const hasData = cred.sensitive_data_found
+                  return (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                        <RiLockLine className="text-rose-500 flex-shrink-0" />
+                        <span className="flex-1 text-[13px] font-bold text-slate-700">Credential Leakage Detection</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          hasData ? 'bg-amber-50 text-amber-700 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}>{hasData ? 'Detected' : 'Clean'}</span>
+                      </div>
+                      <div className="px-4 py-3">
+                        {hasData ? (
+                          <div className="space-y-1.5">
+                            {cred.extracted_emails?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-20 flex-shrink-0 mt-0.5">Emails</span>
+                                <div className="flex flex-wrap gap-1">{cred.extracted_emails.map((e, i) => <code key={i} className="text-[10px] bg-amber-50 px-1.5 py-0.5 rounded text-amber-700 border border-amber-100">{e}</code>)}</div>
+                              </div>
+                            )}
+                            {cred.extracted_phones?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-20 flex-shrink-0 mt-0.5">Phones</span>
+                                <div className="flex flex-wrap gap-1">{cred.extracted_phones.map((p, i) => <code key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{p}</code>)}</div>
+                              </div>
+                            )}
+                            {cred.extracted_account_numbers?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-20 flex-shrink-0 mt-0.5">Accounts</span>
+                                <div className="flex flex-wrap gap-1">{cred.extracted_account_numbers.map((a, i) => <code key={i} className="text-[10px] bg-red-50 px-1.5 py-0.5 rounded text-red-700 border border-red-100">{a}</code>)}</div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <RiCheckboxCircleLine className="text-emerald-500" />
+                            <p className="text-[12px] text-emerald-600">No credentials or sensitive data detected in email body</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+              </div>
+            ) : runningPhishing ? (
+              <div className="flex items-center gap-3 py-4">
+                <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
+                  <RiLoader4Line className="text-sky-500 text-xl" />
+                </motion.span>
+                <p className="text-[13px] text-slate-600">Running 6-model phishing analysis pipeline…</p>
               </div>
             ) : (
               <p className="text-[12px] text-slate-400 italic">Awaiting analysis…</p>
@@ -1750,6 +2259,311 @@ export default function EmailDetail({ emailId, onBack }) {
                   <AttachmentPanel key={att.id} emailId={emailId} att={att} />
                 ))}
               </div>
+            </AnalysisSection>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              FULL PIPELINE RESULTS (Streamlit-equivalent)
+             ══════════════════════════════════════════════ */}
+
+          {/* Full pipeline status banner */}
+          {(runningFull || fullAnalysis) && (
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+              runningFull
+                ? 'bg-violet-50 border-violet-200'
+                : 'bg-gradient-to-r from-violet-50 to-sky-50 border-violet-200'
+            }`}>
+              {runningFull ? (
+                <>
+                  <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
+                    <RiLoader4Line className="text-violet-500 text-lg" />
+                  </motion.span>
+                  <span className="text-[13px] text-violet-700 font-semibold">Running 7-layer pipeline — Ollama qwen3:8b + RoBERTa + Voice + Credentials…</span>
+                </>
+              ) : (
+                <>
+                  <RiSparklingLine className="text-violet-500 text-lg" />
+                  <span className="text-[13px] text-slate-700 font-semibold">Full pipeline complete</span>
+                  <span className="text-[10px] text-slate-400 ml-1 bg-violet-100 text-violet-600 px-2 py-0.5 rounded-full font-bold">STREAMLIT-EQUIVALENT</span>
+                  <button
+                    onClick={runFullPipeline}
+                    className="ml-auto text-[11px] text-slate-400 hover:text-violet-500 flex items-center gap-1"
+                  >
+                    <RiRefreshLine /> Re-run
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── FP-1. Ollama LLM Deep Fraud Analysis ── */}
+          {(fullAnalysis?.fraud_analysis?.llm_based || runningFull) && (
+            <AnalysisSection
+              icon={<RiBrainLine />}
+              title="Ollama qwen3:8b — Deep Fraud Analysis"
+              defaultOpen
+              loading={runningFull && !fullAnalysis?.fraud_analysis?.llm_based}
+              badge={fullAnalysis?.fraud_analysis?.llm_based && (() => {
+                const llm = fullAnalysis.fraud_analysis.llm_based
+                const v   = (llm.verdict || 'UNKNOWN').toUpperCase()
+                const cls = {
+                  FRAUD:      'bg-red-50 text-red-700 border-red-200',
+                  SUSPICIOUS: 'bg-amber-50 text-amber-700 border-amber-200',
+                  LEGITIMATE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                  ERROR:      'bg-slate-50 text-slate-500 border-slate-200',
+                }[v] || 'bg-slate-50 text-slate-500 border-slate-200'
+                return <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${cls}`}>{v}</span>
+              })()}
+            >
+              {fullAnalysis?.fraud_analysis?.llm_based ? (() => {
+                const llm = fullAnalysis.fraud_analysis.llm_based
+                const v   = (llm.verdict || 'UNKNOWN').toUpperCase()
+                const isFraud = ['FRAUD','SUSPICIOUS'].includes(v)
+                return (
+                  <div className="space-y-3">
+                    {/* Verdict + confidence grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        { label: 'Verdict',    value: v },
+                        { label: 'Confidence', value: llm.confidence || '—' },
+                        { label: 'Fraud Flag', value: llm.is_fraud ? '⚠️ YES' : '✅ NO' },
+                        { label: 'Model',      value: 'qwen3:8b' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                          <p className="text-[13px] font-bold text-slate-800 mt-0.5">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Analyst explanation */}
+                    {llm.explanation && (
+                      <div className={`p-3 rounded-xl border ${
+                        isFraud ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'
+                      }`}>
+                        <p className={`text-[11px] font-bold mb-1 uppercase tracking-wide ${
+                          isFraud ? 'text-red-700' : 'text-emerald-700'
+                        }`}>🔍 LLM Analyst Explanation</p>
+                        <p className="text-[13px] text-slate-700 leading-relaxed">{llm.explanation}</p>
+                      </div>
+                    )}
+
+                    {/* Red flags */}
+                    {llm.red_flags?.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">🚩 LLM Red Flags</p>
+                        <div className="flex flex-wrap gap-1">
+                          {llm.red_flags.map((f, i) => <IndicatorChip key={i} text={f} level="danger" />)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })() : (
+                <p className="text-[12px] text-slate-400 italic">Awaiting full pipeline…</p>
+              )}
+            </AnalysisSection>
+          )}
+
+          {/* ── FP-2. Unified FraudShield Score ── */}
+          {(fullAnalysis?.unified_score || runningFull) && (
+            <AnalysisSection
+              icon={<RiShieldLine />}
+              title="FraudShield Unified Score (4-Signal Fusion)"
+              defaultOpen
+              loading={runningFull && !fullAnalysis?.unified_score}
+              badge={fullAnalysis?.unified_score && (
+                <TierBadge tier={fullAnalysis.unified_score.tier} />
+              )}
+            >
+              {fullAnalysis?.unified_score ? (() => {
+                const u  = fullAnalysis.unified_score
+                const fs = fullAnalysis.fused_score_details || {}
+                const tc = { CRITICAL:'text-red-600', HIGH:'text-amber-600', MEDIUM:'text-sky-600', LOW:'text-emerald-600' }[u.tier] || 'text-slate-600'
+                return (
+                  <div className="space-y-4">
+                    {/* Master score + bar */}
+                    <div className="flex items-center gap-4">
+                      <div className="flex-shrink-0">
+                        <ScoreMeter score={u.final_score} size={80} />
+                      </div>
+                      <div className="flex-1 space-y-1.5">
+                        <p className={`text-[16px] font-extrabold ${tc}`}>{u.tier} — {u.verdict}</p>
+                        <p className="text-[12px] text-slate-600 font-medium">{u.outlook_action}</p>
+                        <p className="text-[11px] text-slate-400">{u.confidence_label}</p>
+                      </div>
+                    </div>
+
+                    {/* 4-signal breakdown */}
+                    {u.all_signals && (
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Signal Breakdown</p>
+                        <div className="space-y-2">
+                          <ScoreBar label="ML (RoBERTa/DistilBERT)" value={Math.round(u.all_signals.ml_score || 0)}    color="bg-sky-500"    delay={0.05} />
+                          <ScoreBar label="LLM (Ollama qwen3:8b)"  value={Math.round(u.all_signals.llm_score || 0)}   color="bg-violet-500" delay={0.10} />
+                          <ScoreBar label="Rule-Based Heuristics"  value={Math.round(u.all_signals.rule_score || 0)}  color="bg-indigo-400" delay={0.15} />
+                          <ScoreBar label="Voice Deepfake Signal"  value={u.all_signals.voice_score || 0}             color="bg-rose-400"   delay={0.20} />
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1.5">Scorer: {u.all_signals.scorer_used}</p>
+                      </div>
+                    )}
+
+                    {/* ML layer details */}
+                    {fs.risk_score != null && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { label: 'ML Score',    value: `${fs.risk_score}/100` },
+                          { label: 'RoBERTa',     value: fs.roberta_prob != null ? `${(fs.roberta_prob * 100).toFixed(0)}%` : 'N/A' },
+                          { label: 'Rule Score',  value: `${Math.round(fs.rule_score || 0)}/100` },
+                          { label: 'Header Score',value: `${fs.header_score || 0}/100` },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                            <p className="text-[12px] font-bold text-slate-700 mt-0.5">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Analyst explanation */}
+                    {u.explanation && (
+                      <div className="p-3 bg-sky-50 border border-sky-100 rounded-xl">
+                        <p className="text-[11px] font-bold text-sky-700 uppercase tracking-wide mb-1">AI Analyst Explanation</p>
+                        <p className="text-[12px] text-slate-700 leading-relaxed">{u.explanation}</p>
+                      </div>
+                    )}
+
+                    {/* Merged indicators */}
+                    {u.top_indicators?.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Top Indicators (merged from all layers)</p>
+                        <div className="flex flex-wrap gap-1">
+                          {u.top_indicators.map((ind, i) => <IndicatorChip key={i} text={ind} level="warn" />)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })() : (
+                <p className="text-[12px] text-slate-400 italic">Awaiting full pipeline…</p>
+              )}
+            </AnalysisSection>
+          )}
+
+          {/* ── FP-3. Credential Scanner (Full Pipeline) ── */}
+          {(fullAnalysis?.credential_scan || runningFull) && (
+            <AnalysisSection
+              icon={<RiLockLine />}
+              title="Credential Scanner (Regex + Entropy + NER)"
+              loading={runningFull && !fullAnalysis?.credential_scan}
+              badge={fullAnalysis?.credential_scan && (
+                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                  (fullAnalysis.credential_scan.total_findings || 0) > 0
+                    ? 'bg-red-50 text-red-700 border-red-200'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  {fullAnalysis.credential_scan.total_findings || 0} found
+                </span>
+              )}
+            >
+              {fullAnalysis?.credential_scan ? (() => {
+                const cs = fullAnalysis.credential_scan
+                return (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Credentials Found', value: cs.total_findings || 0 },
+                        { label: 'Risk Score',      value: `${cs.risk_score || 0}/100` },
+                        { label: 'Risk Level',      value: cs.risk_label || '—' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                          <p className="text-[14px] font-bold text-slate-800 mt-0.5">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {cs.human_summary && (
+                      <p className="text-[12px] text-slate-600 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">{cs.human_summary}</p>
+                    )}
+                    {cs.findings?.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Findings</p>
+                        {cs.findings.slice(0, 8).map((f, i) => <FindingRow key={i} finding={f} />)}
+                      </div>
+                    )}
+                    {!cs.findings?.length && (
+                      <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                        <RiCheckboxCircleLine className="text-emerald-500 text-lg flex-shrink-0" />
+                        <p className="text-[12px] text-emerald-700">No credentials or sensitive data detected in full pipeline scan.</p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })() : (
+                <p className="text-[12px] text-slate-400 italic">Awaiting full pipeline…</p>
+              )}
+            </AnalysisSection>
+          )}
+
+          {/* ── FP-4. n8n Incident Response ── */}
+          {fullAnalysis?.n8n_incident?.triggered && (
+            <AnalysisSection
+              icon={<RiFlashlightLine />}
+              title="n8n Incident Response"
+              defaultOpen
+              badge={
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-50 text-red-700 border border-red-200">
+                  Incident Triggered
+                </span>
+              }
+            >
+              {(() => {
+                const n8n = fullAnalysis.n8n_incident
+                const u   = fullAnalysis.unified_score || {}
+                const tc  = { CRITICAL:'#dc2626', HIGH:'#ea580c', MEDIUM:'#ca8a04', LOW:'#16a34a' }[u.tier] || '#6b7280'
+                return (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[
+                        { label: 'Incident ID',    value: n8n.incident_id || '—' },
+                        { label: 'Prediction ID',  value: fullAnalysis.prediction_id || '—' },
+                        { label: 'Tier',           value: u.tier || '—' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                          <p className="text-[11px] font-bold text-slate-800 mt-0.5 font-mono break-all">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {n8n.message && (
+                      <p className="text-[12px] text-slate-600">{n8n.message}</p>
+                    )}
+                    {/* Human-in-loop approve/reject */}
+                    {n8n.approve_url && n8n.reject_url && (
+                      <div className="p-4 rounded-xl border-2 border-red-200 bg-red-50">
+                        <p className="text-[11px] font-bold text-red-700 uppercase tracking-wide mb-1">🚨 CRITICAL — Human Approval Required</p>
+                        <p className="text-[12px] text-red-600 mb-3">A bank analyst must approve or reject the quarantine action below.</p>
+                        <div className="flex gap-2">
+                          <a
+                            href={n8n.approve_url}
+                            target="_blank" rel="noopener noreferrer"
+                            className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-500 text-white text-[13px] font-bold rounded-lg hover:bg-emerald-600 transition-colors"
+                          >
+                            <RiCheckLine /> APPROVE quarantine
+                          </a>
+                          <a
+                            href={n8n.reject_url}
+                            target="_blank" rel="noopener noreferrer"
+                            className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-white border-2 border-slate-300 text-slate-700 text-[13px] font-bold rounded-lg hover:border-red-400 hover:text-red-600 transition-colors"
+                          >
+                            <RiCloseLine /> REJECT — allow email
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </AnalysisSection>
           )}
 
