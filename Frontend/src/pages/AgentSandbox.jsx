@@ -68,14 +68,19 @@ function collectFindings(dimensions) {
     const items = [...(dim.tests || []), ...(dim.scenarios || []), ...(dim.groups || [])]
     items.forEach(item => {
       if (!item.passed) out.push({
-        dimension: (dim.dimension || key).replace(/_/g, ' '),
+        dimension: (dim.dimension || key).replace(/_/g, ' ').toUpperCase(),
         id:        item.id || '—',
         name:      item.name || item.category || item.intent || '—',
         severity:  item.severity || 'medium',
         response:  item.response || '',
+        reason:    item.judge_reason || item.reason || '',
+        payload:   item.payload || '',
       })
     })
   })
+  // Sort critical → high → medium → low
+  const order = { critical: 0, high: 1, medium: 2, low: 3 }
+  out.sort((a, b) => (order[a.severity] ?? 2) - (order[b.severity] ?? 2))
   return out
 }
 
@@ -165,6 +170,7 @@ export default function AgentSandbox() {
   const [uploadData, setUploadData]       = useState({})
   const fileInputRef = useRef(null)
   const pollRef      = useRef(null)   // stores the setInterval ID for cleanup
+  const logBoxRef    = useRef(null)   // for auto-scroll
 
   // scan state
   const [scanning, setScanning]         = useState(false)
@@ -184,8 +190,14 @@ export default function AgentSandbox() {
   const [deletingModel, setDeletingModel] = useState(null)
 
   const addLog = useCallback((msg, type = 'info') => {
-    setLogLines(prev => [...prev, { msg: `[${new Date().toLocaleTimeString()}] ${msg}`, type }])
+    const ts = new Date().toLocaleTimeString('en-GB', { hour12: false })
+    setLogLines(prev => [...prev.slice(-199), { msg: `${ts}  ${msg}`, type }])
   }, [])
+
+  // Auto-scroll log box when new lines arrive
+  useEffect(() => {
+    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
+  }, [logLines])
 
   // ── Health + models ─────────────────────────────────────────────────────────
   const checkHealth = useCallback(async () => {
@@ -251,6 +263,7 @@ export default function AgentSandbox() {
 
   // ── Poll scan status ─────────────────────────────────────────────────────────
   const pollScanStatus = useCallback((scanId, activeDims) => {
+    let lastLogLen = 0
     const iv = setInterval(async () => {
       try {
         const r = await fetch(`${SBX_API}/scan/${scanId}/status`)
@@ -260,8 +273,20 @@ export default function AgentSandbox() {
         setScanProgress(d.progress_pct || 0)
         setCurrentDim(d.current_dim || '')
 
-        // Animate dimension badges based on progress
-        const donePct = d.progress_pct || 0
+        // ── Stream new server-side prompt logs into the log box ──────────────
+        const srvLog = d.log || []
+        if (srvLog.length > lastLogLen) {
+          const newLines = srvLog.slice(lastLogLen)
+          newLines.forEach(line => {
+            setLogLines(prev => [...prev.slice(-199), {
+              msg: line, type: 'prompt'
+            }])
+          })
+          lastLogLen = srvLog.length
+        }
+
+        // Update dimension badges based on real done count
+        const donePct   = d.progress_pct || 0
         const doneCount = Math.floor((donePct / 100) * activeDims.length)
         activeDims.forEach((dim, i) => {
           if (i < doneCount) {
@@ -278,19 +303,18 @@ export default function AgentSandbox() {
           clearInterval(iv)
           pollRef.current = null
           const data = d.result
-          // Update dimension statuses from real results
           activeDims.forEach(dim => {
             const dimData = data.dimensions?.[dim.id]
             if (dimData && !dimData.error) {
               const pct = Math.round(dimData.pass_rate ?? 0)
               setDimStatuses(prev => ({
                 ...prev,
-                [dim.id]: { status: dimData.failed > 0 ? 'failed' : 'done', result: `${pct}% pass` }
+                [dim.id]: { status: dimData.failed > 0 ? 'failed' : 'done', result: `${pct}%` }
               }))
-              addLog(`${dim.label}: ${dimData.passed}/${dimData.total} passed`, dimData.failed > 0 ? 'err' : 'ok')
+              addLog(`DONE  ${dim.label}: ${dimData.passed}/${dimData.total} passed (${pct}%)`, dimData.failed > 0 ? 'err' : 'ok')
             }
           })
-          addLog('Scan complete — results ready ✓', 'ok')
+          addLog(`SCAN  complete — score=${data.risk_score?.score}/100 rating=${data.risk_score?.rating}`, 'ok')
           setScanResult(data)
           setScanPhase('results')
           setScanning(false)
@@ -300,13 +324,13 @@ export default function AgentSandbox() {
         } else if (d.status === 'error') {
           clearInterval(iv)
           pollRef.current = null
-          addLog('Scan failed on server.', 'err')
+          addLog('ERROR  server-side scan failure', 'err')
           setScanPhase('error')
           setScanning(false)
           setActiveScanId(null)
         }
       } catch {}
-    }, 5000)
+    }, 1500)   // poll every 1.5 s for fast feedback
     return iv
   }, [addLog, fetchHistory])
 
@@ -326,7 +350,7 @@ export default function AgentSandbox() {
     // ── Step 1: SSE upload if file provided ───────────────────────────────────
     if (selectedFile) {
       setScanPhase('uploading')
-      addLog(`Uploading ${selectedFile.name} (${fmtBytes(selectedFile.size)})…`, 'info')
+      addLog(`UPLOAD  ${selectedFile.name} (${fmtBytes(selectedFile.size)})`, 'info')
       setUploadPhase('validating')
 
       try {
@@ -350,15 +374,15 @@ export default function AgentSandbox() {
               setUploadPhase(evt.phase)
               setUploadData(evt)
               if (evt.phase === 'error') {
-                addLog(`✗ Upload error: ${evt.error}`, 'err')
+                addLog(`ERR   upload: ${evt.error}`, 'err')
                 setScanPhase('error'); setScanning(false); return
               }
-              if (evt.phase === 'saving') addLog(`Saving… ${fmtSavedBytes(evt.saved_bytes)}`, 'info')
-              if (evt.phase === 'saving_done') addLog(`File saved (${fmtSavedBytes(evt.saved_bytes)}) ✓`, 'ok')
-              if (evt.phase === 'registering') addLog(`Registering: ${evt.status}`, 'info')
+              if (evt.phase === 'saving') addLog(`SAVE  ${fmtSavedBytes(evt.saved_bytes)} written`, 'info')
+              if (evt.phase === 'saving_done') addLog(`SAVE  complete — ${fmtSavedBytes(evt.saved_bytes)}`, 'ok')
+              if (evt.phase === 'registering') addLog(`REG   ${evt.status}${evt.pct >= 0 ? ` ${evt.pct}%` : ''}`, 'info')
               if (evt.phase === 'ready') {
                 modelName = evt.model_name
-                addLog(`✓ Model ready as "${modelName}"`, 'ok')
+                addLog(`READY model="${modelName}"`, 'ok')
                 setAvailableModels(prev => [...new Set([...prev, modelName])])
                 setSelectedModel(modelName)
                 await fetchModelMeta()
@@ -368,7 +392,7 @@ export default function AgentSandbox() {
         }
         if (!modelName) { setScanPhase('error'); setScanning(false); return }
       } catch (e) {
-        addLog(`✗ Upload exception: ${e.message}`, 'err')
+      addLog(`ERR   upload exception: ${e.message}`, 'err')
         setScanPhase('error'); setScanning(false); return
       }
       setUploadPhase(null)
@@ -376,14 +400,14 @@ export default function AgentSandbox() {
 
     // ── Step 2: Start background scan ─────────────────────────────────────────
     setScanPhase('scanning')
-    addLog(`Starting scan on "${modelName}"`, 'info')
-    addLog(`Profile: ${scanProfile} · ${activeDims.length} dimensions`, 'info')
+    addLog(`SCAN  model="${modelName}" profile=${scanProfile} dims=${activeDims.length}`, 'info')
+    addLog(`JUDGE tinyllama (offline)  concurrency=6`, 'info')
 
-    // Mark all as running immediately
+    // Mark all dims as running/waiting
     activeDims.forEach((d, i) => {
       setTimeout(() => {
-        setDimStatuses(prev => ({ ...prev, [d.id]: { status: i === 0 ? 'running' : 'waiting', result: i === 0 ? 'running…' : 'waiting' } }))
-      }, i * 100)
+        setDimStatuses(prev => ({ ...prev, [d.id]: { status: 'running', result: 'running…' } }))
+      }, i * 80)
     })
 
     const dimsPayload = scanProfile === 'all'   ? ['all']
@@ -398,44 +422,46 @@ export default function AgentSandbox() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const { scan_id } = await res.json()
       setActiveScanId(scan_id)
-      addLog(`Scan queued — ID: ${scan_id.slice(0, 8)}…`, 'info')
-      addLog('Polling for results every 5s…', 'info')
+      addLog(`SCAN  id=${scan_id.slice(0, 8)}… status=queued`, 'info')
+      addLog(`POLL  interval=1.5s — waiting for results…`, 'info')
       if (pollRef.current) clearInterval(pollRef.current)
       pollRef.current = pollScanStatus(scan_id, activeDims)
     } catch (e) {
-      addLog(`✗ Failed to start scan: ${e.message}`, 'err')
+      addLog(`ERR   failed to start scan: ${e.message}`, 'err')
       activeDims.forEach(d => setDimStatuses(prev => ({ ...prev, [d.id]: { status: 'failed', result: 'error' } })))
       setScanPhase('error'); setScanning(false)
     }
   }
 
   // ── Download report ──────────────────────────────────────────────────────────
+  const [downloading, setDownloading] = useState(false)
   const downloadReport = async (scanId) => {
+    setDownloading(true)
     try {
       const r = await fetch(`${SBX_API}/report/${scanId}`)
-      if (!r.ok) { alert('Report not ready yet — try again in a moment.'); return }
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`
+        try { const j = await r.json(); msg = j.error || msg } catch {}
+        alert(`Report not ready: ${msg}`)
+        return
+      }
       const html = await r.text()
       const blob = new Blob([html], { type: 'text/html' })
       const url  = URL.createObjectURL(blob)
-      // Open inline in a new tab so the report is immediately visible
-      const tab = window.open(url, '_blank')
-      if (!tab) {
-        // Popup blocked — fall back to download
-        const a = document.createElement('a')
-        a.href = url; a.download = `security_report_${scanId}.html`
-        document.body.appendChild(a); a.click()
-        document.body.removeChild(a)
-      }
-      // Revoke after a short delay so the new tab has time to load it
-      setTimeout(() => URL.revokeObjectURL(url), 60000)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `security_report_${scanId.slice(0, 8)}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
     } catch (e) { alert('Report download failed: ' + e.message) }
+    finally { setDownloading(false) }
   }
 
   const activeDims = getActiveDims()
   const riskCfg    = RISK_CONFIG[scanResult?.risk_score?.rating] || RISK_CONFIG.MEDIUM
   const findings   = scanResult ? collectFindings(scanResult.dimensions) : []
-  const criticalFindings = findings.filter(f => f.severity === 'critical')
-  const otherFindings    = findings.filter(f => f.severity !== 'critical')
 
   return (
     <PageWrapper>
@@ -617,43 +643,51 @@ export default function AgentSandbox() {
                   <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">
                     {/* Overall scan progress bar */}
                     {scanPhase === 'scanning' && (
-                      <div>
-                        <div className="flex justify-between text-[12px] mb-1.5">
-                          <span className="font-semibold text-slate-700">
-                            {currentDim ? `Running: ${currentDim.replace(/_/g,' ')}` : 'Starting scan…'}
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                        <div className="flex justify-between items-center text-[12px]">
+                          <span className="font-bold text-slate-700">
+                            {scanProgress < 100 ? `Scanning… ${scanProgress}%` : 'Scan complete ✓'}
                           </span>
                           <span className="font-mono text-sky-600 font-bold">{scanProgress}%</span>
                         </div>
-                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                          <motion.div className="h-full bg-gradient-to-r from-sky-400 to-sky-600 rounded-full"
-                            animate={{ width: `${scanProgress}%` }} transition={{ duration: 0.5 }} />
+                        <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                          <motion.div
+                            className="h-full rounded-full bg-gradient-to-r from-sky-400 to-violet-500"
+                            animate={{ width: `${scanProgress}%` }}
+                            transition={{ duration: 0.5 }}
+                          />
                         </div>
+                        <p className="text-[10px] font-mono text-slate-400">
+                          {currentDim ? `active: ${currentDim.replace(/_/g,' ')}` : 'initializing…'}
+                        </p>
                       </div>
                     )}
 
                     {/* Per-dim list */}
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       {activeDims.map(d => {
-                        const ds = dimStatuses[d.id] || { status: 'waiting', result: 'waiting' }
+                        const ds = dimStatuses[d.id] || { status: 'waiting', result: 'queued' }
                         return (
-                          <div key={d.id} className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl">
+                          <div key={d.id} className="flex items-center gap-3 px-4 py-2.5 bg-white border border-slate-100 rounded-xl">
                             <DimStatusBadge status={ds.status} />
-                            <span className="text-[13px] font-semibold text-slate-700 flex-1">{d.label}</span>
+                            <span className="text-[12px] font-semibold text-slate-700 flex-1">{d.label}</span>
                             <span className="text-[11px] font-mono text-slate-400">{ds.result}</span>
                           </div>
                         )
                       })}
                     </div>
 
-                    {/* Log box */}
-                    <div className="bg-slate-950 rounded-xl p-4 font-mono text-[11px] leading-relaxed h-32 overflow-auto">
+                    {/* Live prompt log */}
+                    <div ref={logBoxRef} className="bg-slate-950 rounded-xl p-4 font-mono text-[11px] leading-relaxed h-44 overflow-auto space-y-px">
                       {logLines.map((l, i) => (
                         <div key={i} className={
-                          l.type === 'ok'   ? 'text-emerald-400' :
-                          l.type === 'err'  ? 'text-red-400'     :
-                          l.type === 'info' ? 'text-sky-400'     : 'text-slate-400'
+                          l.type === 'ok'     ? 'text-emerald-400' :
+                          l.type === 'err'    ? 'text-red-400'     :
+                          l.type === 'info'   ? 'text-sky-400'     :
+                          l.type === 'prompt' ? 'text-slate-500'   : 'text-slate-400'
                         }>{l.msg}</div>
                       ))}
+                      {logLines.length === 0 && <div className="text-slate-600">waiting for prompts…</div>}
                     </div>
                   </motion.div>
                 )}
@@ -668,96 +702,151 @@ export default function AgentSandbox() {
                   return (
                     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
                       className="space-y-5 border-t border-slate-100 pt-6">
-                      {/* Risk banner */}
+
+                      {/* ── Risk banner ── */}
                       <div className={`flex items-center gap-6 p-5 rounded-xl border ${cfg.bg} ${cfg.border}`}>
                         <div className={`w-20 h-20 rounded-full border-4 flex flex-col items-center justify-center flex-shrink-0 ${cfg.border} ${cfg.color}`}>
                           <span className="text-2xl font-black font-mono">{risk.score ?? '?'}</span>
                           <span className="text-[9px] opacity-60 font-mono">/100</span>
                         </div>
-                        <div className="flex-1">
-                          <p className={`text-lg font-black ${cfg.color}`}>Risk: {risk.rating || '?'}</p>
-                          <p className="text-[12px] text-slate-500 mt-0.5">{cfg.desc}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-base font-black font-mono ${cfg.color}`}>
+                            [{risk.rating || '?'}] RISK RATING
+                          </p>
+                          <p className="text-[12px] font-mono text-slate-500 mt-0.5">{cfg.desc}</p>
+                          <p className="text-[11px] font-mono text-slate-400 mt-1">
+                            model: {scanResult.model} &nbsp;·&nbsp; scan_id: {scanResult.scan_id?.slice(0,8)}…
+                          </p>
                         </div>
-                        <div className="flex gap-6 flex-shrink-0">
+                        <div className="flex gap-4 flex-shrink-0 flex-wrap">
                           {[
                             { label: 'CRITICAL', v: risk.critical_fails ?? 0, cls: 'text-red-500' },
                             { label: 'HIGH',     v: risk.high_fails ?? 0,     cls: 'text-amber-500' },
-                            { label: 'TOTAL',    v: risk.total_failed ?? 0,   cls: 'text-slate-600' },
-                            { label: 'PASS RATE',v: `${overallPassRate}%`,    cls: 'text-emerald-600' },
+                            { label: 'FAILED',   v: risk.total_failed ?? 0,   cls: 'text-slate-600' },
+                            { label: 'PASS%',    v: `${overallPassRate}%`,    cls: 'text-emerald-600' },
                           ].map(({ label, v, cls }) => (
                             <div key={label} className="text-center">
                               <div className={`text-xl font-black font-mono ${cls}`}>{v}</div>
-                              <div className="text-[9px] text-slate-400 font-mono">{label}</div>
+                              <div className="text-[9px] text-slate-400 font-mono tracking-wider">{label}</div>
                             </div>
                           ))}
                         </div>
                       </div>
 
-                      {/* Dimension grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {Object.entries(scanResult.dimensions || {}).map(([key, dim]) => {
-                          if (dim.error) return null
-                          const pct   = Math.round(dim.pass_rate ?? 0)
-                          const color = pct >= 90 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-500'
-                          const bar   = pct >= 90 ? 'bg-emerald-400'   : pct >= 70 ? 'bg-amber-400'   : 'bg-red-400'
-                          const name  = (dim.dimension || key).replace(/_/g, ' ')
-                          return (
-                            <div key={key} className="p-3 bg-white border border-slate-100 rounded-xl">
-                              <div className="flex justify-between items-baseline mb-2">
-                                <span className="text-[11px] font-bold text-slate-600 capitalize">{name}</span>
-                                <span className={`text-[16px] font-black font-mono ${color}`}>{pct}%</span>
+                      {/* ── Dimension grid ── */}
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">DIMENSION RESULTS</p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          {Object.entries(scanResult.dimensions || {}).map(([key, dim]) => {
+                            if (dim.error) return (
+                              <div key={key} className="p-3 bg-white border border-red-100 rounded-xl">
+                                <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">{(dim.dimension||key).replace(/_/g,' ')}</p>
+                                <p className="text-[10px] font-mono text-red-400 truncate">ERR: {dim.error.slice(0,40)}</p>
                               </div>
-                              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
-                                  transition={{ duration: 0.8 }} className={`h-full ${bar}`} />
+                            )
+                            const pct   = Math.round(dim.pass_rate ?? 0)
+                            const color = pct >= 90 ? 'text-emerald-600' : pct >= 70 ? 'text-amber-600' : 'text-red-500'
+                            const bar   = pct >= 90 ? 'bg-emerald-400'   : pct >= 70 ? 'bg-amber-400'   : 'bg-red-400'
+                            const name  = (dim.dimension || key).replace(/_/g, ' ').toUpperCase()
+                            return (
+                              <div key={key} className="p-3 bg-white border border-slate-100 rounded-xl">
+                                <div className="flex justify-between items-baseline mb-2">
+                                  <span className="text-[10px] font-bold text-slate-500 truncate pr-1">{name}</span>
+                                  <span className={`text-[16px] font-black font-mono ${color}`}>{pct}%</span>
+                                </div>
+                                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                  <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+                                    transition={{ duration: 0.8 }} className={`h-full ${bar}`} />
+                                </div>
+                                <div className="flex gap-2 mt-1.5 font-mono text-[9px]">
+                                  <span className="text-emerald-500">✓ {dim.passed ?? 0}</span>
+                                  <span className="text-red-400">✗ {dim.failed ?? 0}</span>
+                                  <span className="text-slate-400">/ {dim.total ?? 0}</span>
+                                </div>
                               </div>
-                              <div className="flex gap-2 mt-1.5 font-mono text-[9px] text-slate-400">
-                                <span className="text-emerald-500">{dim.passed ?? 0} passed</span>
-                                <span className="text-red-400">{dim.failed ?? 0} failed</span>
-                                <span>{dim.total ?? 0} total</span>
-                              </div>
-                            </div>
-                          )
-                        })}
+                            )
+                          })}
+                        </div>
                       </div>
 
-                      {/* Findings */}
-                      {findings.length > 0 && (
+                      {/* ── Findings — structured scanner output ── */}
+                      {findings.length > 0 ? (
                         <div className="space-y-4">
-                          {[['CRITICAL FINDINGS', criticalFindings], ['OTHER FINDINGS', otherFindings]].map(([title, items]) =>
-                            items.length > 0 ? (
-                              <div key={title}>
-                                <div className="flex items-center gap-2 mb-2">
-                                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{title}</span>
-                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">{items.length}</span>
-                                </div>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                            SECURITY FINDINGS &nbsp;
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500 normal-case font-bold">
+                              {findings.length}
+                            </span>
+                          </p>
+                          {['critical','high','medium','low'].map(sev => {
+                            const items = findings.filter(f => f.severity === sev)
+                            if (!items.length) return null
+                            const sevColors = {
+                              critical: 'border-l-red-500 bg-red-50/40',
+                              high:     'border-l-amber-500 bg-amber-50/40',
+                              medium:   'border-l-sky-400 bg-sky-50/40',
+                              low:      'border-l-slate-300 bg-slate-50',
+                            }
+                            const sevLabel = {
+                              critical: 'bg-red-100 text-red-600 border-red-200',
+                              high:     'bg-amber-100 text-amber-600 border-amber-200',
+                              medium:   'bg-sky-100 text-sky-600 border-sky-200',
+                              low:      'bg-slate-100 text-slate-500 border-slate-200',
+                            }
+                            return (
+                              <div key={sev}>
+                                <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${sev === 'critical' ? 'text-red-500' : sev === 'high' ? 'text-amber-500' : sev === 'medium' ? 'text-sky-500' : 'text-slate-400'}`}>
+                                  {sev.toUpperCase()} — {items.length} finding{items.length !== 1 ? 's' : ''}
+                                </p>
                                 <div className="space-y-2">
-                                  {items.slice(0, 6).map((f, i) => (
-                                    <div key={i} className={`p-3 rounded-xl border-l-4 border border-slate-100 bg-white ${f.severity === 'critical' ? 'border-l-red-400' : f.severity === 'high' ? 'border-l-amber-400' : 'border-l-sky-400'}`}>
-                                      <div className="flex items-center gap-2 mb-1">
+                                  {items.slice(0, 8).map((f, i) => (
+                                    <div key={i} className={`p-3 rounded-xl border border-slate-200 border-l-4 ${sevColors[f.severity] || sevColors.medium}`}>
+                                      {/* Header row */}
+                                      <div className="flex items-center gap-2 mb-1.5">
                                         <span className="text-[10px] font-mono text-slate-400">{f.id}</span>
-                                        <span className="text-[12px] font-semibold text-slate-700 flex-1">{f.name}</span>
-                                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${sevBg[f.severity] || sevBg.medium}`}>{f.severity}</span>
+                                        <span className="text-[12px] font-bold text-slate-800 flex-1 truncate">{f.name}</span>
+                                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${sevLabel[f.severity] || sevLabel.medium}`}>
+                                          {f.severity.toUpperCase()}
+                                        </span>
                                       </div>
-                                      <p className="text-[11px] font-mono text-slate-400 capitalize">{f.dimension}</p>
+                                      {/* Dim + judge */}
+                                      <div className="font-mono text-[10px] text-slate-500 mb-1">
+                                        DIM: {f.dimension}
+                                        {f.reason ? <span className="text-slate-400"> &nbsp;·&nbsp; JUDGE: {f.reason}</span> : null}
+                                      </div>
+                                      {/* Model response excerpt */}
                                       {f.response && (
-                                        <p className="text-[11px] font-mono bg-slate-50 text-slate-500 px-2 py-1.5 rounded mt-1.5 truncate">
-                                          {f.response.slice(0, 140)}{f.response.length > 140 ? '…' : ''}
-                                        </p>
+                                        <pre className="text-[10px] font-mono bg-white border border-slate-200 text-slate-500 px-2 py-1.5 rounded mt-1 whitespace-pre-wrap break-words overflow-hidden" style={{ maxHeight: '60px' }}>
+                                          &gt; {f.response.slice(0, 160)}{f.response.length > 160 ? '…' : ''}
+                                        </pre>
                                       )}
                                     </div>
                                   ))}
+                                  {items.length > 8 && (
+                                    <p className="text-[10px] font-mono text-slate-400 text-center py-1">
+                                      … {items.length - 8} more findings in the full report
+                                    </p>
+                                  )}
                                 </div>
                               </div>
-                            ) : null
-                          )}
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className="p-4 border border-emerald-200 bg-emerald-50 rounded-xl font-mono text-[12px] text-emerald-700 text-center">
+                          ✓ NO FAILURES — all {risk.total_tests ?? 0} probes passed
                         </div>
                       )}
 
-                      {/* Download report */}
-                      <button onClick={() => downloadReport(scanResult.scan_id)}
-                        className="w-full py-4 border-2 border-emerald-400 rounded-xl text-emerald-600 font-bold text-[14px] hover:bg-emerald-50 transition-colors flex items-center justify-center gap-2">
-                        <RiDownloadLine className="text-lg" /> Download Full HTML Report
+                      {/* ── Download report ── */}
+                      <button
+                        onClick={() => downloadReport(scanResult.scan_id)}
+                        disabled={downloading}
+                        className="w-full py-4 border-2 border-emerald-400 rounded-xl text-emerald-600 font-bold text-[14px] hover:bg-emerald-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
+                        {downloading
+                          ? <><RiRefreshLine className="animate-spin text-lg" /> Preparing report…</>
+                          : <><RiDownloadLine className="text-lg" /> Download Full HTML Report</>
+                        }
                       </button>
                     </motion.div>
                   )

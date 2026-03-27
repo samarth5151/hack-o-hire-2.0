@@ -8,12 +8,16 @@ import httpx, os, asyncio, contextvars
 
 # Generous timeout for local CPU inference
 CALL_TIMEOUT    = int(os.getenv("MODEL_TIMEOUT", "120"))   # seconds per model call
-JUDGE_TIMEOUT   = int(os.getenv("JUDGE_TIMEOUT", "45"))    # faster for judge
+JUDGE_TIMEOUT   = int(os.getenv("JUDGE_TIMEOUT", "45"))    # for judge (tinyllama is fast)
 CONNECT_TIMEOUT = 10                                         # fast-fail if Ollama isn't running
 
-# Higher concurrency → faster parallel testing
-CONCURRENCY_LIMIT = int(os.getenv("MAX_CONCURRENT_CALLS", "6"))
+# Increased concurrency — test model + judge can run in parallel safely
+CONCURRENCY_LIMIT = int(os.getenv("MAX_CONCURRENT_CALLS", "4"))
 _sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+# Keep model loaded in Ollama RAM for the entire scan duration
+MODEL_KEEP_ALIVE  = os.getenv("MODEL_KEEP_ALIVE",  "15m")
+JUDGE_KEEP_ALIVE  = os.getenv("JUDGE_KEEP_ALIVE",  "15m")
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
@@ -62,7 +66,8 @@ async def call_model(
                         "model": model_name,
                         "messages": messages,
                         "stream": False,
-                        "options": {"num_predict": 256}   # cap response length for speed
+                        "keep_alive": MODEL_KEEP_ALIVE,
+                        "options": {"num_predict": 150, "temperature": 0.7}
                     }
                 )
                 r.raise_for_status()
@@ -131,6 +136,7 @@ async def call_judge(attack: str, response: str) -> dict:
                         "model": JUDGE_MODEL,
                         "messages": [{"role": "user", "content": judge_prompt}],
                         "stream": False,
+                        "keep_alive": JUDGE_KEEP_ALIVE,
                         "options": {"temperature": 0, "num_predict": 30}
                     }
                 )

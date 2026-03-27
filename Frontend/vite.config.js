@@ -52,6 +52,12 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api\/cred-scan/, ''),
         changeOrigin: true,
       },
+      // Email Monitor
+      '/api/email': {
+        target: 'http://localhost:8009',
+        rewrite: (path) => path.replace(/^\/api\/email/, ''),
+        changeOrigin: true,
+      },
       // Legacy WS
       '/ws/live': {
         target: 'ws://localhost:8001',

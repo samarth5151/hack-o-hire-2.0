@@ -11,6 +11,7 @@ import {
   RiShieldUserLine,
   RiDatabaseLine,
   RiRobotFill,
+  RiInboxLine,
 } from 'react-icons/ri'
 
 /* ──────────────────────────────────────────────
@@ -26,11 +27,12 @@ export const NAV_ITEMS = [
   {
     section: 'Detection Modules',
     items: [
-      { id: 'email',       label: 'Email Phishing',       icon: RiMailSendLine   },
-      { id: 'credential',  label: 'Credential Scanner',   icon: RiKeyLine        },
-      { id: 'attachment',  label: 'Attachment Analyzer',  icon: RiAttachment2    },
-      { id: 'website',     label: 'Website Spoofing',     icon: RiGlobalLine     },
-      { id: 'voice',       label: 'Deepfake Voice',       icon: RiMicLine        },
+      { id: 'mailbox',     label: 'Mailbox',               icon: RiInboxLine      },
+      { id: 'email',       label: 'Email Phishing',        icon: RiMailSendLine   },
+      { id: 'credential',  label: 'Credential Scanner',    icon: RiKeyLine        },
+      { id: 'attachment',  label: 'Attachment Analyzer',   icon: RiAttachment2    },
+      { id: 'website',     label: 'Website Spoofing',      icon: RiGlobalLine     },
+      { id: 'voice',       label: 'Deepfake Voice',        icon: RiMicLine        },
     ],
   },
   {
@@ -72,6 +74,7 @@ export const ADMIN_NAV_ITEMS = [
 export const PAGE_META = {
   dashboard:      { title: 'Security Dashboard',        sub: 'Real-time AI threat detection overview'              },
   myanalytics:    { title: 'My Analytics',               sub: 'Personal scan history · Threat insights · Activity' },
+  mailbox:        { title: 'Mailbox',                       sub: 'Real-time email monitoring · Security analysis · IMAP polling'          },
   email:          { title: 'Email Phishing Detector',   sub: 'BERT NLP · Header forensics · URL reputation'       },
   credential:     { title: 'Credential Leakage Scanner',sub: 'TruffleHog · High-entropy · spaCy PII extraction'   },
   attachment:     { title: 'Attachment Analyzer',        sub: 'YARA rules · PDF stream analysis · MalwareBazaar'   },

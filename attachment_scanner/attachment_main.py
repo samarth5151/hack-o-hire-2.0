@@ -1,5 +1,5 @@
 # Attachment Scanner — Main Entry Point
-# Fully rule-based malicious attachment detection (ML removed)
+# Rule-based malicious attachment detection with 4-phase structured output
 
 from magic_detector import detect
 from pdf_analyzer import analyze as analyze_pdf
@@ -9,52 +9,102 @@ from zip_analyzer import analyze as analyze_zip
 from pattern_engine import scan as scan_patterns
 from hash_checker import check as check_hash
 
+# Analyzers that are active per file type
+PDF_EXTENSIONS   = {".pdf"}
+OFFICE_EXTENSIONS = {
+    ".doc", ".xls", ".ppt",
+    ".docx", ".xlsx", ".pptx",
+    ".docm", ".xlsm", ".pptm",
+}
+
+# Risk tier ordering for comparisons
+TIER_ORDER = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0}
+
+
+def _tier_to_status(tier: str) -> str:
+    """Convert risk tier label to a UI-friendly status string."""
+    mapping = {
+        "Critical": "critical",
+        "High":     "high",
+        "Medium":   "medium",
+        "Low":      "low",
+        "Info":     "info",
+        "Clean":    "clean",
+    }
+    return mapping.get(tier, "clean")
+
+
+def _findings_status(findings: list) -> str:
+    """Derive highest-severity status from a list of findings."""
+    if not findings:
+        return "clean"
+    best = max(
+        (TIER_ORDER.get(f.get("risk_tier", "Low"), 1) for f in findings),
+        default=0
+    )
+    reverse = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "info"}
+    return reverse.get(best, "clean")
+
+
+def _group_by_stage(findings: list) -> dict:
+    """Group findings list into dict keyed by stage name."""
+    groups = {}
+    for f in findings:
+        stage = f.get("stage", "Unknown")
+        groups.setdefault(stage, []).append(f)
+    return groups
+
 
 def calculate_final_risk(
-    all_findings,
-    file_type,
-    hash_result,
-    filename
-):
+    all_findings: list,
+    file_type: dict,
+    hash_result: dict,
+    filename: str,
+) -> dict:
+    from magic_detector import HIGH_RISK_EXTENSIONS, MEDIUM_RISK_EXTENSIONS
 
-    from magic_detector import (
-        HIGH_RISK_EXTENSIONS,
-        MEDIUM_RISK_EXTENSIONS
-    )
-
-    ext = file_type.get("declared_extension", "")
+    ext   = file_type.get("declared_extension", "")
     score = 0
 
-    # Known malware hash match
+    # Known malware hash — instant maximum
     if hash_result.get("known_malware"):
         score += 100
 
-    # High-risk extensions (.exe, .dll, etc.)
+    # High-risk extension base score
     if ext in HIGH_RISK_EXTENSIONS:
         score += 50
 
-    # Medium-risk extensions (.docm, .pdf, .zip, etc.)
+    # Medium-risk extension base score (.pdf included via file-type risk)
     if ext in MEDIUM_RISK_EXTENSIONS:
         score += 20
 
-    # Extension mismatch detection
+    # PDF gets a small base since it carries its own deep analyzer
+    if ext == ".pdf" or file_type.get("mime_type", "").startswith("application/pdf"):
+        score += 10
+
+    # Extension mismatch is a strong evasion indicator
     if file_type.get("extension_mismatch"):
         score += 40
 
-    # Rule severity weights
-    tier_points = {
-        "Critical": 25,
-        "High": 15,
-        "Medium": 8,
-        "Low": 3
-    }
+    # High-risk MIME type detected (even without a risky extension)
+    from magic_detector import HIGH_RISK_MIMES
+    if file_type.get("mime_type") in HIGH_RISK_MIMES:
+        score += 30
 
+    # Finding severity weights — Critical findings carry extra weight
+    tier_points = {"Critical": 25, "High": 15, "Medium": 8, "Low": 3}
+
+    # Bonus multiplier when multiple Critical findings are present
+    critical_count = sum(
+        1 for f in all_findings if f.get("risk_tier") == "Critical"
+    )
     for finding in all_findings:
-        score += tier_points.get(
-            finding.get("risk_tier", "Low"), 3
-        )
+        pts = tier_points.get(finding.get("risk_tier", "Low"), 3)
+        # 2nd+ critical findings score extra (layered attack signatures)
+        if finding.get("risk_tier") == "Critical" and critical_count >= 2:
+            pts = int(pts * 1.4)
+        score += pts
 
-    # Cap score at 100
     score = min(score, 100)
 
     # Assign final label
@@ -62,7 +112,7 @@ def calculate_final_risk(
         label = "Critical"
     elif score >= 60:
         label = "High"
-    elif score >= 40:
+    elif score >= 35:
         label = "Medium"
     elif score > 0:
         label = "Low"
@@ -72,174 +122,244 @@ def calculate_final_risk(
     return {"score": score, "label": label}
 
 
-def analyze_attachment(file_bytes, filename):
+def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
 
     ext = (
         "." + filename.lower().rsplit(".", 1)[-1]
         if "." in filename else ""
     )
 
-    # Stage 1 — file type detection
+    # ── Phase 1: File Type Detection ──────────────────────────────────────────
     file_type = detect(file_bytes, filename)
 
-    # Stage 2 — analyzers
-    all_findings = []
-
-    # Extension mismatch rule
+    phase1_findings = []
     if file_type.get("extension_mismatch"):
-
-        all_findings.append({
-            "stage": "File Type Detection",
-            "rule": "extension_mismatch",
-            "description":
-                file_type["mismatch_desc"],
-            "risk_tier": "Critical",
-            "category": "evasion",
+        phase1_findings.append({
+            "stage":       "File Type Detection",
+            "rule":        "extension_mismatch",
+            "description": file_type.get("mismatch_desc", "Extension mismatch detected"),
+            "detail":      "Declared file extension does not match actual binary content",
+            "risk_tier":   "Critical",
+            "category":    "evasion",
+            "context":     "",
         })
 
-    # PDF analyzer
-    if (
-        ext == ".pdf"
-        or file_bytes[:4] == b"\x25\x50\x44\x46"
-    ):
-        all_findings += analyze_pdf(file_bytes)
+    # ── Phase 2: Deep Content Analysis ────────────────────────────────────────
+    analyzers_run  = []
+    deep_findings  = []
 
-    # Office analyzer
-    if ext in (
-        ".doc", ".xls", ".ppt",
-        ".docx", ".xlsx", ".pptx",
-        ".docm", ".xlsm", ".pptm"
-    ):
-        all_findings += analyze_office(
-            file_bytes,
-            filename
-        )
+    is_pdf    = ext in PDF_EXTENSIONS or file_bytes[:4] == b"\x25\x50\x44\x46"
+    is_office = ext in OFFICE_EXTENSIONS
+    is_pe     = file_bytes[:2] == b"\x4d\x5a"
+    is_zip    = file_bytes[:4] == b"\x50\x4b\x03\x04"
 
-    # PE analyzer
-    if file_bytes[:2] == b"\x4d\x5a":
-        all_findings += analyze_pe(file_bytes)
+    if is_pdf:
+        pdf_findings = analyze_pdf(file_bytes)
+        analyzers_run.append({
+            "name":            "PDF Stream Analyzer",
+            "status":          _findings_status(pdf_findings),
+            "findings_count":  len(pdf_findings),
+            "findings":        pdf_findings,
+            "description":     "4-layer PDF analysis: binary streams, object tree (pikepdf), metadata/URLs (PyMuPDF), stream text (pdfminer)",
+        })
+        deep_findings += pdf_findings
 
-    # ZIP analyzer
-    if file_bytes[:4] == b"\x50\x4b\x03\x04":
-        all_findings += analyze_zip(file_bytes)
+    if is_office:
+        office_findings = analyze_office(file_bytes, filename)
+        analyzers_run.append({
+            "name":            "Office Macro Extractor",
+            "status":          _findings_status(office_findings),
+            "findings_count":  len(office_findings),
+            "findings":        office_findings,
+            "description":     "Scans for VBA macros, DDE injection, remote templates, XLM legacy macros, and XML patterns",
+        })
+        deep_findings += office_findings
 
-    # Pattern engine (YARA-style rules)
-    all_findings += scan_patterns(file_bytes)
+    if is_pe:
+        pe_findings = analyze_pe(file_bytes)
+        analyzers_run.append({
+            "name":            "PE Header Analyzer",
+            "status":          _findings_status(pe_findings),
+            "findings_count":  len(pe_findings),
+            "findings":        pe_findings,
+            "description":     "Scans PE import table, section entropy, packer detection, suspicious strings and embedded URLs",
+        })
+        deep_findings += pe_findings
 
-    # Stage 3 — hash lookup
+    if is_zip:
+        zip_findings = analyze_zip(file_bytes)
+        analyzers_run.append({
+            "name":            "ZIP/Archive Analyzer",
+            "status":          _findings_status(zip_findings),
+            "findings_count":  len(zip_findings),
+            "findings":        zip_findings,
+            "description":     "Inspects archive entries for executable payloads, path traversal, and suspicious file names",
+        })
+        deep_findings += zip_findings
+
+    # YARA / pattern engine always runs
+    pattern_findings = scan_patterns(file_bytes)
+    analyzers_run.append({
+        "name":            "YARA Pattern Engine",
+        "status":          _findings_status(pattern_findings),
+        "findings_count":  len(pattern_findings),
+        "findings":        pattern_findings,
+        "description":     "Matches against YARA community rules (1900+ signatures) covering ransomware, shellcode, LOLBins, macros and more",
+    })
+    deep_findings += pattern_findings
+
+    # Combine all findings (phase 1 evasion + deep analysis)
+    all_findings = phase1_findings + deep_findings
+
+    # ── Phase 3: Hash Reputation ───────────────────────────────────────────────
     hash_result = check_hash(file_bytes)
 
-    # Final rule-based risk score
-    risk = calculate_final_risk(
-        all_findings,
-        file_type,
-        hash_result,
-        filename
-    )
-
-    # Generate human-readable summary
-    human_summary = _build_summary(
-        all_findings, file_type, hash_result, risk
-    )
+    # ── Phase 4: Risk Verdict ─────────────────────────────────────────────────
+    risk               = calculate_final_risk(all_findings, file_type, hash_result, filename)
+    human_summary      = _build_summary(all_findings, file_type, hash_result, risk)
     recommended_action = _build_action(risk["label"])
 
-    # Helper function to count severity tiers
+    # ── Count by severity ──────────────────────────────────────────────────────
     def count(tier):
-        return sum(
-            1 for f in all_findings
-            if f.get("risk_tier") == tier
-        )
+        return sum(1 for f in all_findings if f.get("risk_tier") == tier)
+
+    # ── Structured phase output ────────────────────────────────────────────────
+    p1_status = "critical" if file_type.get("extension_mismatch") else _tier_to_status(file_type.get("risk_level", "Info"))
+
+    phases = [
+        {
+            "id":      1,
+            "name":    "File Type Detection",
+            "icon":    "fingerprint",
+            "status":  p1_status,
+            "summary": _phase1_summary(file_type),
+            "details": {
+                "declared_extension": file_type.get("declared_extension"),
+                "detected_type":      file_type.get("detected_type"),
+                "mime_type":          file_type.get("mime_type"),
+                "extension_mismatch": file_type.get("extension_mismatch", False),
+                "mismatch_desc":      file_type.get("mismatch_desc", ""),
+                "risk_level":         file_type.get("risk_level"),
+                "detection_method":   file_type.get("detection_method"),
+                "file_size_kb":       file_type.get("file_size_kb"),
+            },
+            "findings": phase1_findings,
+        },
+        {
+            "id":             2,
+            "name":           "Deep Content Analysis",
+            "icon":           "search",
+            "status":         _findings_status(deep_findings),
+            "summary":        _phase2_summary(analyzers_run, deep_findings),
+            "analyzers":      analyzers_run,
+            "total_findings": len(deep_findings),
+        },
+        {
+            "id":      3,
+            "name":    "Hash Reputation Check",
+            "icon":    "hash",
+            "status":  "critical" if hash_result.get("known_malware") else "clean",
+            "summary": _phase3_summary(hash_result),
+            "details": {
+                "md5":           hash_result.get("md5"),
+                "sha1":          hash_result.get("sha1"),
+                "sha256":        hash_result.get("sha256"),
+                "verdict":       hash_result.get("verdict"),
+                "known_malware": hash_result.get("known_malware"),
+                "source":        hash_result.get("source"),
+                "malware_details": hash_result.get("details"),
+                "database_size": hash_result.get("database_size"),
+                "mode":          hash_result.get("malwarebazaar"),
+            },
+        },
+        {
+            "id":                 4,
+            "name":               "Risk Verdict",
+            "icon":               "verdict",
+            "status":             _tier_to_status(risk["label"]),
+            "summary":            human_summary,
+            "score":              risk["score"],
+            "label":              risk["label"],
+            "human_summary":      human_summary,
+            "recommended_action": recommended_action,
+            "severity_breakdown": {
+                "critical": count("Critical"),
+                "high":     count("High"),
+                "medium":   count("Medium"),
+                "low":      count("Low"),
+            },
+        },
+    ]
 
     return {
-
-        "module":
-            "Malicious Attachment Analyzer",
-
-        "filename":
-            filename,
-
-        "file_size_kb":
-            file_type["file_size_kb"],
-
-        "all_findings":
-            all_findings,
-
-        "stages": {
-
-            "stage_1_file_type":
-                file_type,
-
-            "stage_2_findings":
-                all_findings,
-
-            "stage_3_hash":
-                hash_result,
-
-            "stage_4_ml":
-                "Disabled (rule-based scoring only)",
-        },
-
-        "total_findings":
-            len(all_findings),
-
-        "critical_count":
-            count("Critical"),
-
-        "high_count":
-            count("High"),
-
-        "medium_count":
-            count("Medium"),
-
-        "low_count":
-            count("Low"),
-
-        "risk_score":
-            risk["score"],
-
-        "risk_label":
-            risk["label"],
-
-        "human_summary":
-            human_summary,
-
-        "recommended_action":
-            recommended_action,
+        "module":             "Malicious Attachment Analyzer",
+        "filename":           filename,
+        "file_size_kb":       file_type["file_size_kb"],
+        "phases":             phases,
+        "all_findings":       all_findings,
+        "total_findings":     len(all_findings),
+        "critical_count":     count("Critical"),
+        "high_count":         count("High"),
+        "medium_count":       count("Medium"),
+        "low_count":          count("Low"),
+        "risk_score":         risk["score"],
+        "risk_label":         risk["label"],
+        "human_summary":      human_summary,
+        "recommended_action": recommended_action,
     }
 
 
-def _build_summary(findings, file_type, hash_result, risk):
-    """Generate a human-readable summary of the scan."""
+# ── Phase summary helpers ──────────────────────────────────────────────────────
+
+def _phase1_summary(file_type: dict) -> str:
+    ext      = file_type.get("declared_extension", "N/A")
+    detected = file_type.get("detected_type", "Unknown")
+    if file_type.get("extension_mismatch"):
+        return f"⚠ Mismatch: {file_type.get('mismatch_desc', 'Extension mismatch')}"
+    return f"{ext.upper().lstrip('.')} · {detected}"
+
+
+def _phase2_summary(analyzers: list, findings: list) -> str:
+    if not findings:
+        return "No suspicious indicators detected in file content"
+    active = [a for a in analyzers if a["findings_count"] > 0]
+    names  = ", ".join(a["name"] for a in active)
+    return f"{len(findings)} indicator(s) across {len(active)} analyzer(s): {names}"
+
+
+def _phase3_summary(hash_result: dict) -> str:
+    if hash_result.get("known_malware"):
+        return f"MATCH: {hash_result['known_malware']} · Source: {hash_result.get('source', 'unknown')}"
+    db = hash_result.get("database_size", "")
+    return f"Not found in threat database · {db}"
+
+
+def _build_summary(findings: list, file_type: dict, hash_result: dict, risk: dict) -> str:
     parts = []
 
     if not findings and not hash_result.get("known_malware"):
         return "No suspicious indicators detected. File appears safe."
 
     if hash_result.get("known_malware"):
-        parts.append(
-            f"Hash matches known malware: {hash_result['known_malware']}."
-        )
+        parts.append(f"Hash matches known malware: {hash_result['known_malware']}.")
 
     if file_type.get("extension_mismatch"):
-        parts.append("File extension does not match actual content.")
+        parts.append("File extension does not match actual content (evasion technique).")
 
-    # Summarise by stage
-    stages_seen = {}
+    stages_seen: dict = {}
     for f in findings:
         stage = f.get("stage", "Unknown")
         stages_seen[stage] = stages_seen.get(stage, 0) + 1
 
     if stages_seen:
         stage_parts = [
-            f"{count} finding(s) from {stage}"
-            for stage, count in stages_seen.items()
+            f"{cnt} finding(s) from {stage}"
+            for stage, cnt in stages_seen.items()
         ]
         parts.append(
-            f"Found {len(findings)} indicator(s): "
-            + ", ".join(stage_parts) + "."
+            f"Found {len(findings)} indicator(s): " + ", ".join(stage_parts) + "."
         )
 
-    # Severity breakdown
     crit = sum(1 for f in findings if f.get("risk_tier") == "Critical")
     high = sum(1 for f in findings if f.get("risk_tier") == "High")
     if crit:
@@ -250,13 +370,12 @@ def _build_summary(findings, file_type, hash_result, risk):
     return " ".join(parts) if parts else "Scan complete."
 
 
-def _build_action(label):
-    """Return recommended action based on risk label."""
+def _build_action(label: str) -> str:
     actions = {
-        "Clean":    "No action required. File is safe.",
-        "Low":      "Low risk — review if file origin is untrusted.",
-        "Medium":   "Quarantine file and review with security team.",
-        "High":     "Block file. Investigate source and alert SOC.",
-        "Critical": "IMMEDIATE: Block, quarantine, escalate to SOC, notify compliance.",
+        "Clean":    "No action required. File appears safe to open.",
+        "Low":      "Low risk — verify file origin before opening.",
+        "Medium":   "Quarantine file and review with your security team.",
+        "High":     "Block file immediately. Investigate source and alert SOC.",
+        "Critical": "IMMEDIATE ACTION: Block, quarantine, escalate to SOC, notify compliance.",
     }
     return actions.get(label, "Review manually.")

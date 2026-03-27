@@ -13,3 +13,4 @@ pefile
 py7zr
 yara-python
 requests
+psycopg2-binary

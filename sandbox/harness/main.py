@@ -187,7 +187,9 @@ async def upload_model(file: UploadFile = File(...)):
         }) + '\n\n'
 
         # ── Register with Ollama — stream progress ────────────────────────
-        payload = {"model": model_name, "from": dest}
+        # Use modelfile with FROM directive (works across all Ollama versions).
+        # The `from` field is for existing model names, NOT file paths.
+        payload = {"model": model_name, "modelfile": f"FROM {dest}\n"}
         try:
             async with httpx.AsyncClient(timeout=600) as c:
                 async with c.stream("POST", f"{OLLAMA_HOST}/api/create", json=payload) as resp:
@@ -302,21 +304,38 @@ async def _scan_worker(scan_id: str, model_name: str, dimensions: list[str],
 
     _scans[scan_id].update({
         "status":       "running",
-        "current_dim":  "all (parallel)",
+        "current_dim":  "warming_up",
         "progress_pct": 0,
         "total_dims":   total_dims,
         "done_dims":    0,
         "dim_status":   {k: "running" for k in active_dims},
     })
 
-    print(f"[scan:{scan_id}] Launching {total_dims} dimensions in PARALLEL for model={model_name}", flush=True)
+    # ── Pre-warm: load model into Ollama RAM before test dimensions start ──
+    import httpx as _httpx
+    try:
+        print(f"[scan:{scan_id}] Pre-warming model {model_name}…", flush=True)
+        async with _httpx.AsyncClient(timeout=120) as c:
+            await c.post(
+                f"{OLLAMA_HOST}/api/chat",
+                json={
+                    "model":      model_name,
+                    "messages":   [{"role": "user", "content": "hi"}],
+                    "stream":     False,
+                    "keep_alive": _mc.MODEL_KEEP_ALIVE,
+                    "options":    {"num_predict": 1},
+                }
+            )
+        print(f"[scan:{scan_id}] Model warm.", flush=True)
+    except Exception as e:
+        print(f"[scan:{scan_id}] Warm-up failed (continuing): {e}", flush=True)
 
-    # ── Run ALL dimensions simultaneously ─────────────────────────────────────
-    tasks = [
-        _run_dim(scan_id, dim_id, fn, model_name, judge_enabled, results)
-        for dim_id, (_, fn) in active_dims.items()
-    ]
-    await asyncio.gather(*tasks, return_exceptions=False)
+    print(f"[scan:{scan_id}] Running {total_dims} dimensions SEQUENTIALLY for model={model_name}", flush=True)
+
+    # ── Run dimensions one-at-a-time to avoid OOM (two models in RAM = crash) ──
+    for dim_id, (_, fn) in active_dims.items():
+        _scans[scan_id]["current_dim"] = dim_id
+        await _run_dim(scan_id, dim_id, fn, model_name, judge_enabled, results)
 
     print(f"[scan:{scan_id}] All dimensions complete. Computing score…", flush=True)
 
@@ -352,6 +371,29 @@ async def _scan_worker(scan_id: str, model_name: str, dimensions: list[str],
 # ── POST /scan — returns scan_id immediately ──────────────────────────────────
 @app.post("/scan")
 async def start_scan(req: ScanRequest, bg: BackgroundTasks):
+    import httpx as _httpx
+    # Validate model exists in Ollama before queuing — avoids silent failures
+    try:
+        async with _httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(f"{OLLAMA_HOST}/api/tags")
+            r.raise_for_status()
+            available = [m["name"] for m in r.json().get("models", [])]
+            # Ollama may append ":latest" tag
+            model_variants = {req.model_name, f"{req.model_name}:latest"}
+            if not any(m in available or m.split(":")[0] in [a.split(":")[0] for a in available]
+                       for m in model_variants):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": f"Model '{req.model_name}' not found in Ollama. "
+                                 f"Available: {available}. "
+                                 "Upload the model first or choose an installed one."
+                    }
+                )
+    except Exception as e:
+        print(f"[scan] Could not verify model with Ollama: {e}", flush=True)
+        # Continue anyway — Ollama might be warming up
+
     scan_id = str(uuid.uuid4())
     _scans[scan_id] = {
         "status":      "queued",

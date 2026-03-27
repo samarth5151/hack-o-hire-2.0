@@ -186,6 +186,33 @@ services:
     networks:
       - aegisai-net
 
+  # ── Email Monitor ────────────────────────────────────────────────────────
+  email-monitor:
+    build:
+      context: ./email_monitoring
+      dockerfile: Dockerfile
+    ports:
+      - "8009:8009"
+    environment:
+      DATABASE_URL: postgresql://dlp:dlp@postgres:5432/dlp
+      IMAP_ENABLED: "true"
+      IMAP_SERVER: "imap.gmail.com"
+      IMAP_PORT: "993"
+      IMAP_USE_SSL: "true"
+      IMAP_USER: "samarthspatil51@gmail.com"
+      IMAP_PASSWORD: "pqme owui xthk ggnp"
+      IMAP_MAILBOX: "INBOX"
+      MAILHOG_URL: "http://mailhog:8025"
+      POLL_INTERVAL: "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - aegisai-net
+
   # ── Website Spoofing ─────────────────────────────────────────────────────
   website-spoofing:
     build:
@@ -223,6 +250,7 @@ services:
       - voice-scanner
       - attachment-scanner
       - website-spoofing
+      - email-monitor
     restart: unless-stopped
     networks:
       - aegisai-net

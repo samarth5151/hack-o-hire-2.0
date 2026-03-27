@@ -14,46 +14,95 @@ RULES_DIR = os.path.join(os.path.dirname(__file__), "yara_rules")
 
 # ── Fallback patterns (used if YARA unavailable) ──────────────────────────────
 FALLBACK_PATTERNS = [
+    # ── Ransomware ───────────────────────────────────────────────────────────
     (b"your files have been encrypted", "Critical", "ransomware",
      "Ransomware note detected in file"),
     (b"pay the ransom",                 "Critical", "ransomware",
      "Ransom payment demand found"),
     (b"decrypt your files",             "Critical", "ransomware",
      "File decryption offer — ransomware indicator"),
+    (b"vssadmin delete shadows",        "Critical", "evasion",
+     "Deletes volume shadow copies — ransomware technique"),
+
+    # ── ActiveX / COM scripting (JS, VBScript, WSH) ──────────────────────────
+    (b"activexobject",                  "Critical", "activex",
+     "ActiveXObject instantiation — COM/shell access from script"),
+    (b"wscript.shell",                  "Critical", "activex",
+     "WScript.Shell — executes arbitrary OS commands"),
+    (b"wscript.createobject",           "Critical", "activex",
+     "WScript.CreateObject — creates arbitrary COM objects"),
+    (b"shell.application",              "Critical", "activex",
+     "Shell.Application COM object — file system and process access"),
+    (b"scripting.filesystemobject",     "High",     "activex",
+     "FileSystemObject — reads/writes/deletes files"),
+    (b"createobject(",                  "High",     "activex",
+     "CreateObject call — instantiates COM/ActiveX object"),
+
+    # ── Dangerous script execution ─────────────────────────────────────────
+    (b"shell.run(",                     "Critical", "shell_exec",
+     "Shell.Run() — executes OS process from script"),
+    (b"shell.exec(",                    "Critical", "shell_exec",
+     "Shell.Exec() — executes OS command with output capture"),
+    (b"cmd.exe",                        "Critical", "shell_exec",
+     "CMD execution detected"),
+    (b"powershell.exe",                 "Critical", "shell_exec",
+     "PowerShell executable referenced in file"),
+    (b"mshta",                          "Critical", "lolbin",
+     "MSHTA execution — bypasses application controls"),
+    (b"regsvr32",                       "Critical", "lolbin",
+     "Regsvr32 abuse — LOLBin COM registration bypass"),
+
+    # ── PowerShell ────────────────────────────────────────────────────────
     (b"invoke-expression",              "Critical", "powershell",
      "PowerShell Invoke-Expression — executes dynamic code"),
     (b"iex(",                           "Critical", "powershell",
      "IEX shorthand — obfuscated PowerShell execution"),
     (b"-executionpolicy bypass",        "Critical", "powershell",
      "Bypasses PowerShell execution policy"),
+    (b"powershell -enc",                "Critical", "powershell",
+     "Encoded PowerShell — obfuscated command"),
+    (b"invoke-webrequest",              "High",     "downloader",
+     "Invoke-WebRequest — downloads content from internet"),
+    (b"downloadstring(",                "High",     "downloader",
+     "DownloadString — downloads and executes remote code"),
+
+    # ── Obfuscation ───────────────────────────────────────────────────────
     (b"frombase64string",               "High",     "obfuscation",
      "Base64 decoding — common payload obfuscation"),
+    (b"eval(unescape",                  "Critical", "obfuscation",
+     "eval(unescape()) — classic JS malware obfuscation pattern"),
+    (b"eval(atob(",                     "Critical", "obfuscation",
+     "eval(atob()) — base64-decoded JS execution"),
+    (b"string.fromcharcode(",           "High",     "obfuscation",
+     "String.fromCharCode() — character-code obfuscation"),
+    (b"document.write(unescape",        "High",     "obfuscation",
+     "document.write(unescape()) — injecting decoded content"),
+
+    # ── Network / Downloader ──────────────────────────────────────────────
+    (b"urldownloadtofile",              "Critical", "downloader",
+     "URLDownloadToFile — downloads and saves remote payload"),
+    (b"xmlhttp",                        "High",     "downloader",
+     "XMLHTTP object — HTTP request from script (C2 / dropper)"),
+    (b"winhttp",                        "High",     "downloader",
+     "WinHTTP object — HTTP request from script"),
+    (b"bitsadmin",                      "High",     "lolbin",
+     "BITSAdmin — background download utility abuse"),
+    (b"certutil",                       "High",     "lolbin",
+     "CertUtil — can decode and download files"),
+
+    # ── Persistence ───────────────────────────────────────────────────────
     (b"net user /add",                  "Critical", "persistence",
      "Creates hidden user account"),
     (b"net localgroup administrators",  "Critical", "persistence",
      "Adds user to admin group"),
-    (b"vssadmin delete shadows",        "Critical", "evasion",
-     "Deletes volume shadow copies — ransomware technique"),
-    (b"wscript.shell",                  "Critical", "macro",
-     "WScript.Shell — executes system commands"),
-    (b"urldownloadtofile",              "Critical", "downloader",
-     "Downloads file from internet — dropper behaviour"),
-    (b"cmd.exe",                        "Critical", "shell_exec",
-     "CMD execution detected"),
-    (b"powershell -enc",                "Critical", "powershell",
-     "Encoded PowerShell — obfuscated command"),
-    (b"ddeauto",                        "Critical", "dde",
-     "DDE auto-execute command"),
-    (b"mshta",                          "Critical", "lolbin",
-     "MSHTA execution — bypasses controls"),
-    (b"regsvr32",                       "Critical", "lolbin",
-     "Regsvr32 abuse — LOLBin technique"),
-    (b"certutil",                       "High",     "lolbin",
-     "CertUtil — can decode and download files"),
-    (b"bitsadmin",                      "High",     "lolbin",
-     "BITSAdmin — download utility abuse"),
     (b"schtasks /create",               "High",     "persistence",
      "Creates scheduled task — persistence mechanism"),
+    (b"reg add",                        "High",     "persistence",
+     "Registry key creation — possible persistence or config change"),
+
+    # ── DDE / Macro ───────────────────────────────────────────────────────
+    (b"ddeauto",                        "Critical", "dde",
+     "DDE auto-execute command in document"),
 ]
 
 # ── YARA compiler — runs once at startup ──────────────────────────────────────
@@ -295,11 +344,32 @@ def _fallback_scan(file_bytes: bytes) -> list:
 
 def scan(file_bytes: bytes) -> list:
     """
-    Scan file with YARA rules.
-    Falls back to pattern scan if YARA unavailable.
-    Called by attachment_main.py for every file.
+    Dual-layer scan:
+      Layer A — YARA community rules (when available)
+      Layer B — Critical fallback patterns always run alongside YARA
+                to catch ActiveX, shell exec, PS obfuscation, etc.
+    Results from both layers are merged and deduplicated.
     """
+    findings = []
+
     if YARA_RULES is not None:
-        return _yara_scan(file_bytes)
-    else:
-        return _fallback_scan(file_bytes)
+        findings += _yara_scan(file_bytes)
+
+    # Always run fallback patterns — they catch specific critical indicators
+    # that YARA community rules frequently miss (ActiveXObject, Shell.Run, etc.)
+    findings += _fallback_scan(file_bytes)
+
+    # Deduplicate: keep highest-severity entry per (category, pattern)
+    TIER_ORDER = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
+    seen: dict = {}
+    for f in findings:
+        key      = (f.get("category", ""), f.get("rule", "").split(" (")[0].lower())
+        existing = seen.get(key)
+        if not existing:
+            seen[key] = f
+        else:
+            if TIER_ORDER.get(f.get("risk_tier", "Low"), 1) > \
+               TIER_ORDER.get(existing.get("risk_tier", "Low"), 1):
+                seen[key] = f
+
+    return list(seen.values())

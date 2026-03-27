@@ -110,22 +110,41 @@ def predict(audio_path: str, deep_model, rf_model,
         for desc, val in top5
     ]
 
-    # 6 — LLM explanation
+    # 6 — LLM explanation (auto-selects first available Ollama model)
     explanation = ""
     if use_llm:
         try:
             import ollama
-            prompt = f"""You are a voice fraud analyst at Barclays bank.
+
+            # Discover which models are actually installed
+            PREFERRED = ["llama3", "llama3.2", "llama3:8b", "tinyllama", "phi3", "mistral", "gemma"]
+            available_models = []
+            try:
+                available_models = [m["name"].split(":")[0] for m in ollama.list().get("models", [])]
+            except Exception:
+                pass
+
+            # Pick first preferred model that is installed; fall back to tinyllama unconditionally
+            selected_model = None
+            for candidate in PREFERRED:
+                if any(candidate in m for m in available_models) or not available_models:
+                    selected_model = candidate
+                    break
+            if not selected_model:
+                selected_model = available_models[0] if available_models else "tinyllama"
+
+            prompt = f"""You are a voice fraud analyst at a bank.
 An audio clip was analyzed by our deepfake detection system.
 
 Risk score : {risk}/100
 Tier       : {tier}
 Top signals: {'; '.join([d for d, v in top5[:3]])}
 
-Write exactly 2 sentences for a non-technical bank security reviewer.
-Be specific about what the audio signals mean. No jargon."""
+Write exactly 2 clear sentences for a non-technical security reviewer.
+Explain what the audio signals indicate about whether the voice is AI-generated."""
+
             response = ollama.chat(
-                model="llama3",
+                model=selected_model,
                 messages=[{"role": "user", "content": prompt}]
             )
             explanation = response["message"]["content"].strip()
