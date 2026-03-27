@@ -87,9 +87,19 @@ class ScoreCalibrator:
 if __name__ == "__main__":
     from torch import load as tload
     deep = DeepfakeVoiceDetector().to(DEVICE)
-    deep.load_state_dict(
-        tload(MODELS_DIR / "best_eer.pt", map_location=DEVICE)
-    )
+
+    v2_path = MODELS_DIR / "best_eer_v2.pt"
+    v1_path = MODELS_DIR / "best_eer.pt"
+
+    if v2_path.exists():
+        ckpt = tload(v2_path, map_location=DEVICE)
+        state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        deep.load_state_dict(state_dict)
+        print(f"Loaded best_eer_v2.pt")
+    else:
+        deep.load_state_dict(tload(v1_path, map_location=DEVICE))
+        print("Loaded best_eer.pt (fallback)")
+
     rf  = load_rf()
     cal = ScoreCalibrator()
     cal.fit(deep, rf)

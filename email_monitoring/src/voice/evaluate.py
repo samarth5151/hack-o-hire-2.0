@@ -34,8 +34,8 @@ from model import DeepfakeVoiceDetector
 # ── Configuration ──────────────────────────────────────────────────
 THRESHOLD = 0.55   # Binary decision boundary — slightly above 0.5 to reduce false positives
 
-# Set to True AFTER v2 MFCC model is retrained with diverse real speakers
-_V2_READY = False
+# best_eer_v2.pt is the updated primary MFCC model
+_V2_READY = True
 
 # ── Risk tiers ────────────────────────────────────────────────────
 TIERS = [
@@ -51,6 +51,10 @@ _model_v2         = None
 _model_loaded     = False
 _load_attempted   = False
 _model            = None   # back-compat alias
+
+_xgb_clf          = None   # XGBoost / RF secondary MFCC classifier
+_xgb_loaded       = False
+_xgb_load_attempted = False
 
 _w2v_model        = None   # Wav2Vec2Model
 _w2v_extractor    = None   # Wav2Vec2FeatureExtractor
@@ -96,24 +100,64 @@ def _load_single(path, label: str):
 
 
 def _load_model():
-    """Load MFCC model(s) once and cache globally."""
+    """Load MFCC model(s) once and cache globally.
+    best_eer_v2.pt is the primary model when _V2_READY is True.
+    """
     global _model_v1, _model_v2, _model, _model_loaded, _load_attempted
     if _load_attempted:
         return _model_loaded
 
     _load_attempted = True
-    _model_v1 = _load_single(MODELS_DIR / "best_eer.pt", "Model v1 (best_eer)")
 
     if _V2_READY:
-        _model_v2 = _load_single(MODELS_DIR / "best_eer_v2.pt", "Model v2 (best_eer_v2)")
-        if _model_v1 and _model_v2:
-            print("  🔀 MFCC ensemble: v1 (no CMN) + v2 (CMN)")
+        _model_v2 = _load_single(MODELS_DIR / "best_eer_v2.pt", "Model v2 (best_eer_v2) [PRIMARY]")
+        _model_v1 = _load_single(MODELS_DIR / "best_eer.pt",    "Model v1 (best_eer)    [FALLBACK]")
+        _model = _model_v2 or _model_v1   # v2 is primary
+        if _model_v2:
+            print("  🎯 Primary MFCC model: best_eer_v2.pt")
+        elif _model_v1:
+            print("  ⚠️  best_eer_v2.pt not found — using best_eer.pt")
     else:
+        _model_v1 = _load_single(MODELS_DIR / "best_eer.pt", "Model v1 (best_eer)")
         _model_v2 = None
+        _model = _model_v1
 
-    _model_loaded = _model_v1 is not None
-    _model = _model_v1
+    _model_loaded = _model is not None
     return _model_loaded
+
+
+def _load_xgb():
+    """
+    Load XGBoost / RF secondary MFCC classifier once and cache globally.
+    Searches: email_monitoring/models/, then fraudshield-voice/models/saved/
+    """
+    global _xgb_clf, _xgb_loaded, _xgb_load_attempted
+    if _xgb_load_attempted:
+        return _xgb_loaded
+    _xgb_load_attempted = True
+
+    # Search order: local models dir first, then fraudshield-voice
+    _ROOT = MODELS_DIR.parent.parent          # repo root  (Hack-o-hire-2/)
+    candidates = [
+        MODELS_DIR / "xgb_voice.pkl",
+        MODELS_DIR / "rf_voice.pkl",
+        _ROOT / "fraudshield-voice" / "models" / "saved" / "rf_model.pkl",
+    ]
+
+    for path in candidates:
+        if path.exists():
+            try:
+                import pickle
+                with open(path, "rb") as f:
+                    _xgb_clf = pickle.load(f)
+                _xgb_loaded = True
+                print(f"  ✅ XGBoost/RF secondary MFCC model loaded → {path.name}")
+                return True
+            except Exception as e:
+                print(f"  ⚠️  Failed to load secondary model from {path}: {e}")
+
+    print("  ℹ️  No XGBoost/RF secondary MFCC model found — running single-model mode")
+    return False
 
 
 def _load_w2v():
@@ -231,141 +275,181 @@ def _get_spectral_indicators(y: np.ndarray) -> list:
         return []
 
 
-def analyze_audio_file(audio_path: str) -> dict:
+def analyze_audio_file(audio_path: str, filename: str = "") -> dict:
     """
     Full voice deepfake analysis pipeline.
 
-    Args:
-        audio_path: absolute path to audio file saved by attachment extractor
+    Primary model : best_eer_v2.pt  (MFCC CNN+BiLSTM)
+    Secondary model: XGBoost / RF   (MFCC aggregate features)
+    Decision logic:
+      - Both agree FAKE/REAL → use that verdict, averaged confidence
+      - Disagree → REVIEW ⚠️
+      - Final risk_score = 60% best_eer_v2 + 40% XGBoost
 
-    Returns dict with:
-        verdict        : "FAKE 🤖" | "REAL ✅" | "UNKNOWN"
-        risk_score     : int 0-100
-        tier           : "CRITICAL 🚨" | "HIGH 🔴" | "MEDIUM 🟡" | "LOW 🟢"
-        action         : recommended action string
-        deep_score     : float (raw model output 0-1)
-        confidence_pct : str  (e.g. "83.4%")
-        indicators     : list of str  (secondary signals)
-        chunks_analyzed: int
-        processing_ms  : int
-        error          : str | None
+    Returns the per-file output schema defined in the email threat spec.
     """
-    t0 = time.time()
+    t0  = time.time()
+    ext = Path(audio_path).suffix.lower() if audio_path else ""
+    fn  = filename or (Path(audio_path).name if audio_path else "unknown")
 
-    result = {
-        "verdict":         "UNKNOWN",
-        "risk_score":      0,
-        "tier":            "LOW 🟢",
-        "action":          "Analysis pending",
-        "deep_score":      0.0,
-        "confidence_pct":  "0.0%",
-        "vote_fraction":   0.0,
-        "indicators":      [],
-        "chunks_analyzed": 0,
-        "speech_chunks":   0,
-        "processing_ms":   0,
-        "error":           None,
-        "model_used":      "best_eer.pt (MFCC CNN+BiLSTM)",
+    # Formats that need ffmpeg
+    NEEDS_FFMPEG = {".mp3", ".m4a", ".aac", ".wma", ".mp4", ".webm", ".3gp"}
+    NATIVE_FORMATS = {".wav", ".flac", ".ogg"}
+
+    # Base result template matching the spec schema
+    result: dict = {
+        "filename":           fn,
+        "format":             ext,
+        "verdict":            "SKIPPED ⏭️",
+        "risk_score":          0,
+        "risk_tier":           "LOW 🟢",
+        "confidence":          "0.0%",
+        "best_eer_score":      0.0,
+        "xgboost_score":       0.0,
+        "mfcc_features_used":  40,
+        "model_agreement":     False,
+        "recommended_action":  "ALLOW",
+        "skip_reason":         None,
+        # Extra diagnostic fields (retained for compatibility)
+        "processing_ms":       0,
+        "chunks_analyzed":     0,
+        "speech_chunks":       0,
+        "indicators":          [],
+        "model_used":          "best_eer_v2.pt (MFCC CNN+BiLSTM)",
+        "error":               None,
     }
 
-    if not os.path.exists(audio_path):
-        result["error"] = f"File not found: {audio_path}"
+    if not audio_path or not os.path.exists(audio_path):
+        result["error"]       = f"File not found: {audio_path}"
+        result["skip_reason"] = "File not found"
         return result
 
+    # Check ffmpeg requirement for non-native formats
+    if ext in NEEDS_FFMPEG:
+        import shutil
+        if not shutil.which("ffmpeg"):
+            result["skip_reason"] = (
+                f"ffmpeg not installed — required to decode {ext} files. "
+                "Install from https://ffmpeg.org/download.html"
+            )
+            result["verdict"] = "SKIPPED ⏭️"
+            return result
+        result["skip_reason"] = None  # ffmpeg present, OK to proceed
+
     try:
-        # ── Load & chunk ────────────────────────────────────────────
-        print(f"\n  🎙️  Analyzing voice: {os.path.basename(audio_path)}")
+        print(f"\n  🎙️  Analyzing voice: {fn}")
         y      = load_audio(audio_path)
         chunks = chunk_audio(y)
         result["chunks_analyzed"] = len(chunks)
+        result["indicators"]      = _get_spectral_indicators(y)
 
-        # ── Spectral indicators ─────────────────────────────────────
-        result["indicators"] = _get_spectral_indicators(y)
-
-        # ── Model A: MFCC CNN+BiLSTM ───────────────────────────────
+        # ── Primary model: best_eer_v2.pt (CNN+BiLSTM) ────────────────
         model_ok = _load_model()
-        score_a  = None                       # P(fake) from Model A
+        score_primary = None
 
         if model_ok:
             import torch
-
             energies         = [float(np.mean(c**2)) for c in chunks]
             max_energy       = max(energies) if energies else 1.0
             energy_threshold = max(0.001, max_energy * 0.20)
 
             speech_count = 0
-            scores_v1, scores_v2 = [], []
+            scores_primary = []
 
             with torch.no_grad():
                 for chunk, energy in zip(chunks, energies):
                     if energy < energy_threshold:
                         continue
                     speech_count += 1
-
-                    if _model_v1 is not None:
-                        seq = torch.tensor(extract_sequence(chunk, cmn=False)).unsqueeze(0).to(DEVICE)
-                        scores_v1.append(_model_v1(seq).squeeze().item())
-
-                    if _model_v2 is not None:
-                        seq = torch.tensor(extract_sequence(chunk, cmn=True)).unsqueeze(0).to(DEVICE)
-                        scores_v2.append(_model_v2(seq).squeeze().item())
-
-            if scores_v1 and scores_v2:
-                a_scores = [max(a, b) for a, b in zip(scores_v1, scores_v2)]
-            elif scores_v1:
-                a_scores = scores_v1
-            else:
-                a_scores = scores_v2 or [0.0]
+                    # Use v2 (primary); fall back to v1 if v2 unavailable
+                    active = _model_v2 if _model_v2 is not None else _model_v1
+                    use_cmn = _model_v2 is not None   # v2 was trained with CMN
+                    seq = torch.tensor(
+                        extract_sequence(chunk, cmn=use_cmn)
+                    ).unsqueeze(0).to(DEVICE)
+                    scores_primary.append(active(seq).squeeze().item())
 
             result["speech_chunks"] = speech_count
-            score_a = float(np.median(a_scores)) if a_scores else 0.0
-            vote_a  = (sum(s > 0.50 for s in a_scores) / len(a_scores)) if a_scores else 0.0
+            score_primary = float(np.median(scores_primary)) if scores_primary else 0.0
 
-        # ── Model B: wav2vec2 classifier ────────────────────────────
-        w2v_ok  = _load_w2v()
-        score_b = None                        # P(fake) from Model B
+        # ── Secondary model: XGBoost / RF on MFCC aggregates ──────────
+        xgb_ok = _load_xgb()
+        score_xgb = None
 
-        if w2v_ok:
-            score_b = _w2v_predict(y)
+        if xgb_ok:
+            try:
+                agg_scores = []
+                for chunk in chunks:
+                    agg = extract_aggregate(chunk)
+                    p   = float(_xgb_clf.predict_proba([agg])[0][1])
+                    agg_scores.append(p)
+                score_xgb = float(np.mean(agg_scores)) if agg_scores else None
+            except Exception as ex:
+                print(f"  ⚠️  XGBoost scoring error: {ex}")
+                score_xgb = None
 
-        # ── Combine: AND-logic ensemble ─────────────────────────────
-        if score_a is not None and score_b is not None:
-            # Product enforces AND: both must be high for FAKE
-            deep_score = score_a * score_b
-            vote_fraction = vote_a * (1.0 if score_b > 0.50 else 0.0)
-            model_tag = "Ensemble (MFCC × wav2vec2)"
-            print(f"    Model A (MFCC): {score_a:.3f}  |  Model B (w2v): {score_b:.3f}")
-        elif score_a is not None:
-            deep_score    = score_a
-            vote_fraction = vote_a
-            model_tag     = "MFCC CNN+BiLSTM only"
-        elif score_b is not None:
-            deep_score    = score_b
-            vote_fraction = 1.0 if score_b > 0.50 else 0.0
-            model_tag     = "wav2vec2 classifier only"
+        # ── Decision logic ─────────────────────────────────────────────
+        if score_primary is None:
+            score_primary = 0.0
+        if score_xgb is None:
+            score_xgb = score_primary   # single-model fallback
+
+        # Weighted final: 60% primary (best_eer_v2) + 40% XGBoost
+        final_score = 0.60 * score_primary + 0.40 * score_xgb
+        risk_int    = int(final_score * 100)
+
+        primary_fake = score_primary >= THRESHOLD
+        xgb_fake     = score_xgb    >= THRESHOLD
+        agreed       = primary_fake == xgb_fake
+
+        if not agreed:
+            verdict = "REVIEW ⚠️"
+        elif primary_fake:
+            verdict = "FAKE 🚨"
         else:
-            deep_score    = 0.0
-            vote_fraction = 0.0
-            model_tag     = "Spectral rule-based (model fallback)"
+            verdict = "REAL ✅"
 
-        deep_score = round(float(deep_score), 4)
+        tier, action = get_tier(risk_int)
 
-        result["deep_score"]      = deep_score
-        result["confidence_pct"]  = f"{deep_score*100:.1f}%"
-        result["risk_score"]      = int(deep_score * 100)
-        result["vote_fraction"]   = round(vote_fraction, 3)
-        result["verdict"]         = "FAKE 🤖" if deep_score >= THRESHOLD else "REAL ✅"
-        result["tier"], result["action"] = get_tier(result["risk_score"])
-        result["model_used"]      = model_tag
+        # Map tier to recommended action
+        if verdict == "FAKE 🚨" or risk_int >= 70:
+            rec_action = "BLOCK"
+        elif verdict == "REVIEW ⚠️" or risk_int >= 40:
+            rec_action = "REVIEW"
+        else:
+            rec_action = "ALLOW"
 
-        print(f"  🎯 Verdict: {result['verdict']}  Score: {deep_score:.3f}"
-              f"  Tier: {result['tier']}")
+        confidence = final_score if primary_fake else (1.0 - final_score)
+
+        result.update({
+            "verdict":           verdict,
+            "risk_score":         risk_int,
+            "risk_tier":          tier,
+            "confidence":         f"{confidence * 100:.1f}%",
+            "best_eer_score":     round(score_primary, 4),
+            "xgboost_score":      round(score_xgb, 4),
+            "mfcc_features_used": 40,
+            "model_agreement":    agreed,
+            "recommended_action": rec_action,
+            "skip_reason":        None,
+            "model_used": (
+                "best_eer_v2.pt + XGBoost ensemble"
+                if xgb_ok else "best_eer_v2.pt (MFCC CNN+BiLSTM)"
+            ),
+        })
+
+        print(f"  🎯 {fn}  verdict={verdict}  "
+              f"best_eer_v2={score_primary:.3f}  xgb={score_xgb:.3f}  "
+              f"final={final_score:.3f}  agreed={agreed}")
 
     except ImportError as e:
-        result["error"] = f"Missing package: {e}. Run: pip install librosa pydub torch transformers"
+        result["error"]       = f"Missing package: {e}. Run: pip install librosa pydub torch"
+        result["skip_reason"] = f"Missing package: {e}"
+        result["verdict"]     = "SKIPPED ⏭️"
     except Exception as e:
-        result["error"] = f"Voice analysis failed: {str(e)}"
-        print(f"  ❌ Error: {e}")
+        result["error"]   = f"Voice analysis failed: {str(e)}"
+        result["verdict"] = "SKIPPED ⏭️"
+        print(f"  ❌ Error analyzing {fn}: {e}")
 
     result["processing_ms"] = round((time.time() - t0) * 1000)
     return result
@@ -373,5 +457,5 @@ def analyze_audio_file(audio_path: str) -> dict:
 
 class VoiceDeepfakeDetector:
     """Wrapper class for the voice deepfake analysis pipeline."""
-    def predict(self, audio_path: str) -> dict:
-        return analyze_audio_file(audio_path)
+    def predict(self, audio_path: str, filename: str = "") -> dict:
+        return analyze_audio_file(audio_path, filename=filename)

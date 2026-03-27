@@ -12,12 +12,13 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
 # ── Path setup so src/ modules are importable ──────────────────────────────────
 _HERE = Path(__file__).parent
@@ -27,7 +28,8 @@ sys.path.insert(0, str(_HERE))
 from email_db import (
     init_db, get_emails, get_email, get_attachment_content,
     update_email_analysis, update_attachment_analysis,
-    mark_read, toggle_flag, get_stats
+    mark_read, toggle_flag, get_stats,
+    save_email_feedback, get_feedback_stats, mark_email_retraining_used,
 )
 from imap_worker import start_worker
 
@@ -53,6 +55,93 @@ async def startup():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "email-monitor"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Email Threat Analysis — unified 4-module pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+
+class EmailThreatRequest(BaseModel):
+    from_name:   str        = Field(default="",  description="Sender display name")
+    from_email:  str        = Field(default="",  description="Sender email address")
+    subject:     str        = Field(default="",  description="Email subject line")
+    body:        str        = Field(default="",  description="Plain-text email body")
+    attachments: List[str]  = Field(default_factory=list,
+                                    description="Attachment filenames or absolute paths")
+    urls:        List[str]  = Field(default_factory=list,
+                                    description="URLs found in the email")
+
+
+@app.post("/analyze/email")
+def analyze_email_threat(payload: EmailThreatRequest):
+    """
+    Unified email threat analysis endpoint (legacy / direct-submit path).
+
+    Runs all 4 modules in parallel/sequence:
+      1. Phishing Detection     — DistilBERT on subject + body
+      2. Voice Deepfake         — best_eer_v2.pt + XGBoost MFCC ensemble
+      3. Sensitive Data         — Regex + spaCy NER
+      4. URL Security Scanner   — PhishGuard 6-layer pipeline
+
+    Body (JSON):
+      {
+        "from_name":   "John Smith",
+        "from_email":  "john@example.com",
+        "subject":     "Urgent: Verify your account",
+        "body":        "Dear customer...",
+        "attachments": ["/abs/path/to/call.wav", "invoice.pdf"],
+        "urls":        ["https://example.com/login"]
+      }
+
+    Returns the unified threat analysis JSON as per the FraudShield spec.
+    """
+    try:
+        from email_threat_analyzer import analyze_email
+        result = analyze_email(payload.model_dump())
+        return JSONResponse(content=result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
+
+
+@app.post("/analyze-email")
+def analyze_email_full_pipeline(payload: EmailThreatRequest):
+    """
+    Full pipeline email analysis via pipeline_controller.
+
+    Runs:
+      1. Ollama qwen3:8b      — content understanding, entity extraction
+      2. URL Analyzer         — PhishGuard 6-layer (WHOIS/SSL/cookie/XGBoost/HTML/encoding)
+      3. Attachment Scanner   — rule-based + microservice check
+      4. Voice Analyzer       — dual-model deepfake detection
+      5. Credential Scanner   — regex + NER sensitive data extraction
+      6. FraudShield ML       — RoBERTa + rule-based phishing score
+      7. Risk Aggregation     — unified score, flags, recommendation
+
+    Returns STRICT output JSON per the FraudShield spec.
+    """
+    try:
+        sys.path.insert(0, str(_HERE / "src"))
+        from pipeline_controller import run_email_pipeline
+
+        # Build attachment list — payload.attachments may be file paths or names
+        att_list = []
+        for item in payload.attachments:
+            att_list.append({
+                "filename": Path(item).name if item else "unknown",
+                "path":     item if (item and Path(item).exists()) else None,
+                "content":  None,
+            })
+
+        result = run_email_pipeline(
+            sender=payload.from_email or payload.from_name,
+            subject=payload.subject,
+            body=payload.body,
+            attachments=att_list,
+            urls=payload.urls or None,
+        )
+        return JSONResponse(content=result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Pipeline failed: {exc}")
 
 
 # ── Email list ────────────────────────────────────────────────────────────────
@@ -232,14 +321,86 @@ def _run_full_analysis(row: dict) -> dict:
     except Exception as e:
         result["rule_check"] = {"is_suspicious": False, "score": 0, "reasons": []}
 
-    # ── Overall risk aggregation ──────────────────────────────────────────────
-    ph_score  = result["phishing"].get("risk_score", 0)
-    url_max   = max((u.get("risk_score_pct", u.get("risk_score", 0) * 100) for u in url_results), default=0)
-    cred_hits = result["credentials"].get("total_findings", 0)
+    # ── 6. Ollama LLM content analysis ────────────────────────────────────────
+    try:
+        sys.path.insert(0, str(_HERE / "src"))
+        from ollama_service import analyze_email_content
+        llm = analyze_email_content(sender, subject, body)
+        result["llm_analysis"] = llm
+    except Exception as e:
+        result["llm_analysis"] = {
+            "ollama_available": False,
+            "error": str(e),
+            "threat_type": "UNKNOWN",
+            "summary": "",
+            "flags": [],
+            "overall_risk_score": 0,
+            "recommendation": "REVIEW",
+            "extracted_entities": {"emails": [], "accounts": [], "phones": [], "names": []},
+        }
 
-    overall = max(ph_score, int(url_max * 0.6))
+    # ── 7. Voice deepfake detection (audio attachments) ───────────────────────
+    try:
+        # Fetch attachments from DB to check for audio files
+        from email_db import get_email as _get_email_row
+        email_row = _get_email_row(row.get("id", 0)) or {}
+        raw_atts = email_row.get("attachments") or []
+        if isinstance(raw_atts, str):
+            try:
+                import json as _json
+                raw_atts = _json.loads(raw_atts)
+            except Exception:
+                raw_atts = []
+
+        from voice_analyzer import analyze_voice_attachments, AUDIO_EXTENSIONS
+        from pathlib import Path as _Path
+
+        voice_att_list = []
+        for att in (raw_atts if isinstance(raw_atts, list) else []):
+            fname = att.get("filename", "")
+            ext   = _Path(fname).suffix.lower()
+            if ext in AUDIO_EXTENSIONS:
+                # Retrieve content from DB
+                try:
+                    from email_db import get_attachment_content
+                    att_data = get_attachment_content(att.get("id", -1))
+                    content  = bytes(att_data["content"]) if att_data and att_data.get("content") else None
+                except Exception:
+                    content = None
+                voice_att_list.append({"filename": fname, "content": content, "path": None})
+
+        voice_results = analyze_voice_attachments(voice_att_list) if voice_att_list else []
+        result["voice_analysis"] = {
+            "total_audio_files": len(voice_results),
+            "scanned":     sum(1 for v in voice_results if "SKIPPED" not in str(v.get("verdict", ""))),
+            "skipped":     sum(1 for v in voice_results if "SKIPPED" in str(v.get("verdict", ""))),
+            "flagged_as_fake": sum(1 for v in voice_results if "FAKE" in str(v.get("verdict", "")).upper()),
+            "results":     voice_results,
+        }
+    except Exception as e:
+        result["voice_analysis"] = {
+            "total_audio_files": 0, "scanned": 0, "skipped": 0,
+            "flagged_as_fake": 0, "results": [], "error": str(e),
+        }
+
+    # ── Overall risk aggregation ──────────────────────────────────────────────
+    ph_score   = result["phishing"].get("risk_score", 0)
+    url_max    = max((u.get("risk_score_pct", u.get("risk_score", 0) * 100) for u in url_results), default=0)
+    cred_hits  = result["credentials"].get("total_findings", 0)
+    llm_score  = result["llm_analysis"].get("overall_risk_score", 0)
+    voice_max  = max((v.get("risk_score", 0) for v in result["voice_analysis"].get("results", [])), default=0)
+
+    overall = int(
+        ph_score  * 0.35 +
+        url_max   * 0.25 +
+        llm_score * 0.20 +
+        min(cred_hits * 10, 100) * 0.10 +
+        voice_max * 0.10
+    )
+    overall = max(overall, int(ph_score * 0.5))
     if cred_hits > 0:
-        overall = max(overall, 60 + min(cred_hits * 5, 30))
+        overall = max(overall, 50 + min(cred_hits * 5, 30))
+    overall = min(overall, 100)
 
     tier = _score_to_tier(overall)
     result["overall_risk_score"] = overall
@@ -368,6 +529,87 @@ def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dic
     result["processing_ms"] = round((time.time() - t0) * 1000)
 
     return result
+
+
+# ── Feedback & Retraining Endpoints ──────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class EmailFeedbackBody(BaseModel):
+    model_verdict:   str
+    correct_verdict: str
+    module:          str  = "phishing"
+    reviewer_id:     str  = "user"
+    notes:           str  = ""
+
+
+@app.post("/emails/{email_id}/feedback")
+def submit_email_feedback(email_id: int, body: EmailFeedbackBody):
+    """Submit analyst feedback on an email analysis result."""
+    row = get_email(email_id)
+    subject = row.get("subject", "") if row else ""
+    result = save_email_feedback(
+        email_id=email_id,
+        model_verdict=body.model_verdict,
+        correct_verdict=body.correct_verdict,
+        module=body.module,
+        reviewer_id=body.reviewer_id,
+        notes=body.notes,
+        subject=subject,
+    )
+    return result
+
+
+@app.get("/feedback/stats")
+def email_feedback_stats():
+    """Return aggregate email feedback statistics."""
+    return get_feedback_stats()
+
+
+@app.post("/admin/retrain")
+def trigger_email_retraining():
+    """Admin: trigger retraining on queued email model corrections."""
+    stats = get_feedback_stats()
+    queue_size = stats.get("retraining_queue_size", 0)
+
+    if queue_size == 0:
+        return {"status": "skipped", "reason": "No new corrections in queue", "queue_size": 0}
+
+    mark_email_retraining_used()
+
+    retrain_log = []
+    status = "queued"
+    try:
+        from src.train_bert import retrain_from_feedback
+        retrain_log = retrain_from_feedback()
+        status = "started"
+    except Exception as e:
+        retrain_log = [
+            f"Retraining queued — {queue_size} email correction(s) saved.",
+            f"Run train_bert.py to apply. ({e})",
+        ]
+        status = "queued"
+
+    return {
+        "status": status,
+        "queue_size": queue_size,
+        "log": retrain_log,
+        "message": f"Email model retraining initiated on {queue_size} correction(s).",
+    }
+
+
+@app.get("/admin/retrain/status")
+def email_retrain_status():
+    """Return email retraining queue status."""
+    stats = get_feedback_stats()
+    return {
+        "queue_size":     stats.get("retraining_queue_size", 0),
+        "total_scans":    stats.get("total_scans", 0),
+        "total_feedback": stats.get("total_feedback", 0),
+        "accuracy":       stats.get("accuracy"),
+        "false_positives": stats.get("false_positives", 0),
+        "false_negatives": stats.get("false_negatives", 0),
+    }
 
 
 # ── Utility helpers ───────────────────────────────────────────────────────────

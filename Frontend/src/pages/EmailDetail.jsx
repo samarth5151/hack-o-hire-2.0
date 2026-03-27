@@ -12,6 +12,8 @@ import {
   RiBarChartLine, RiSpam2Line, RiCakeLine,
   RiServerLine, RiCalendarLine, RiFingerprint2Line,
   RiLinksLine, RiShieldKeyholeLine, RiBrainLine, RiCodeSSlashLine,
+  RiSpeakLine, RiVoiceprintLine, RiMicLine, RiCpuLine,
+  RiSparklingLine, RiFlashlightLine, RiUserVoiceLine,
 } from 'react-icons/ri'
 import { PageWrapper, ScoreMeter } from '../components/ui'
 
@@ -772,6 +774,246 @@ function URLResultRow({ result }) {
   )
 }
 
+// ── URL Detail Card (full WebsiteSpoofing-style) ───────────────────────────────
+function URLDetailCard({ result, index }) {
+  const score   = Math.round(result.risk_score_pct ?? (result.risk_score || 0) * 100)
+  const verdict = (result.verdict || 'UNKNOWN').toUpperCase()
+  const vColors = {
+    SAFE:       { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-500', hdr: 'bg-emerald-50' },
+    SUSPICIOUS: { border: 'border-amber-200',   bg: 'bg-amber-50',   text: 'text-amber-700',   bar: 'bg-amber-500',   hdr: 'bg-amber-50'   },
+    DANGEROUS:  { border: 'border-red-200',     bg: 'bg-red-50',     text: 'text-red-700',     bar: 'bg-red-500',     hdr: 'bg-red-50'     },
+    ERROR:      { border: 'border-slate-200',   bg: 'bg-slate-50',   text: 'text-slate-500',   bar: 'bg-slate-400',   hdr: 'bg-slate-50'   },
+    UNKNOWN:    { border: 'border-slate-200',   bg: 'bg-slate-50',   text: 'text-slate-500',   bar: 'bg-slate-400',   hdr: 'bg-slate-50'   },
+  }
+  const vc = vColors[verdict] || vColors.UNKNOWN
+
+  const d       = result.details || {}
+  const ml      = d.ml_model  || result.ml_model  || {}
+  const ssl     = d.ssl       || result.ssl       || {}
+  const whois   = d.whois     || result.whois     || {}
+  const cookies = d.cookies   || result.cookies   || {}
+  const encoding= d.encoding  || result.encoding  || {}
+  const html    = d.html      || result.html      || {}
+  const m       = result.metrics || {}
+  const fmt     = m.url_format || {}
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: index * 0.05 }}
+      className={`rounded-2xl border ${vc.border} overflow-hidden shadow-sm`}
+    >
+      {/* Card header */}
+      <div className={`flex items-center gap-3 px-4 py-3 ${vc.hdr} border-b ${vc.border}`}>
+        <span className={`text-[12px] font-bold ${vc.text} flex-shrink-0`}>{verdict}</span>
+        <span className="flex-1 text-[11px] font-mono text-slate-600 truncate">{result.url}</span>
+        <a href={result.url} target="_blank" rel="noopener noreferrer"
+           className="text-sky-400 hover:text-sky-600 flex-shrink-0" title="Open URL">
+          <RiExternalLinkLine className="text-sm" />
+        </a>
+      </div>
+
+      <div className="px-4 py-4 space-y-4 bg-white">
+        {/* Score bar */}
+        <div>
+          <div className="flex justify-between text-[10px] text-slate-500 mb-1.5">
+            <span className="font-bold uppercase tracking-wide">Risk Score</span>
+            <span className={`font-bold ${vc.text}`}>{score}%</span>
+          </div>
+          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+            <motion.div
+              className={`h-full rounded-full ${vc.bar}`}
+              initial={{ width: 0 }}
+              animate={{ width: `${score}%` }}
+              transition={{ duration: 0.6, delay: index * 0.05 + 0.1 }}
+            />
+          </div>
+        </div>
+
+        {/* Risk reasons */}
+        {result.risk_reasons?.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {result.risk_reasons.map((r, i) => (
+              <span key={i} className="text-[10px] bg-red-50 border border-red-100 rounded-full px-2 py-0.5 text-red-600">⚑ {r}</span>
+            ))}
+          </div>
+        )}
+
+        {/* Summary grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            { label: 'ML Verdict',    value: (ml.label || result.prediction || '—').toUpperCase() },
+            { label: 'ML Confidence', value: ml.probability != null ? `${Math.round(ml.probability)}%` : result.confidence != null ? `${Math.round(result.confidence * 100)}%` : '—' },
+            { label: 'SSL',           value: ssl.status ? ssl.status.toUpperCase() : '—' },
+            { label: 'Domain Age',    value: whois.age_days != null ? `${whois.age_days}d` : '—' },
+          ].map(({ label, value }) => (
+            <div key={label} className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+              <p className="text-[12px] font-bold text-slate-700 mt-0.5">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* ── ML Model ── */}
+        {(ml.label || ml.risk_factors?.length > 0) && (
+          <SubSection icon={<RiBrainLine />} title="ML Model — XGBoost Phishing Classifier">
+            <MetaRow label="Label"       value={(ml.label || '—').toUpperCase()} ok={ml.label?.toLowerCase() === 'legitimate' || ml.label?.toLowerCase() === 'safe'} danger={ml.label?.toLowerCase() === 'phishing'} />
+            <MetaRow label="Probability" value={ml.probability != null ? `${Math.round(ml.probability)}%` : '—'} />
+            {ml.summary_report && <MetaRow label="Summary" value={ml.summary_report} />}
+            {ml.risk_factors?.length > 0 && (
+              <div className="mt-1.5">
+                <p className="text-[10px] font-bold text-slate-400 mb-1">Risk Factors</p>
+                {ml.risk_factors.map((f, i) => <p key={i} className="text-[10px] text-red-600 pl-2">· {f}</p>)}
+              </div>
+            )}
+            {ml.safe_factors?.length > 0 && (
+              <div className="mt-1">
+                <p className="text-[10px] font-bold text-slate-400 mb-1">Safe Factors</p>
+                {ml.safe_factors.map((f, i) => <p key={i} className="text-[10px] text-emerald-600 pl-2">· {f}</p>)}
+              </div>
+            )}
+          </SubSection>
+        )}
+
+        {/* ── SSL Certificate ── */}
+        {ssl.status && (
+          <SubSection icon={<RiShieldKeyholeLine />} title="SSL / TLS Certificate">
+            <MetaRow label="Status"   value={ssl.status?.toUpperCase()} ok={ssl.valid} danger={!ssl.valid && ssl.status !== 'no_https'} />
+            <BoolRow  label="Valid & Trusted" value={ssl.valid} trueOk />
+            {ssl.expires_in_days != null && (
+              <MetaRow label="Expires In" value={`${ssl.expires_in_days} days`}
+                ok={ssl.expires_in_days > 30} warn={ssl.expires_in_days > 0 && ssl.expires_in_days <= 30} danger={ssl.expires_in_days <= 0} />
+            )}
+            {ssl.issuer  && <MetaRow label="Issuer"  value={ssl.issuer} />}
+            {ssl.subject && <MetaRow label="Subject" value={ssl.subject} />}
+            {ssl.error   && <MetaRow label="Error"   value={ssl.error} warn />}
+          </SubSection>
+        )}
+
+        {/* ── WHOIS ── */}
+        {(whois.age_days != null || whois.registrar) && (
+          <SubSection icon={<RiCalendarLine />} title="WHOIS & Domain Age">
+            {whois.age_days != null && (
+              <MetaRow label="Domain Age" value={`${whois.age_days} days`}
+                ok={whois.age_days > 365} warn={whois.age_days >= 90} danger={whois.age_days < 90} />
+            )}
+            {whois.status         && <MetaRow label="Status"     value={whois.status} />}
+            {whois.creation_date  && <MetaRow label="Registered" value={whois.creation_date} />}
+            {whois.expiration_date && <MetaRow label="Expires"   value={whois.expiration_date} />}
+            {whois.registrar      && <MetaRow label="Registrar"  value={whois.registrar} />}
+            {whois.country        && <MetaRow label="Country"    value={whois.country} />}
+            <BoolRow label="Domain Resolvable" value={whois.domain_resolvable} trueOk />
+            {whois.error && <MetaRow label="Error" value={whois.error} warn />}
+          </SubSection>
+        )}
+
+        {/* ── Cookie Security ── */}
+        {(cookies.total_cookies != null || cookies.status) && (
+          <SubSection icon={<RiCakeLine />} title="Cookie Security">
+            <MetaRow label="Total Cookies"   value={cookies.total_cookies ?? 0} />
+            <MetaRow label="Security Issues" value={cookies.issues?.length ?? 0}
+              ok={(cookies.issues?.length || 0) === 0} warn={(cookies.issues?.length || 0) > 0} />
+            {cookies.issues?.length > 0 && (
+              <div className="mt-1 space-y-0.5">
+                {cookies.issues.map((iss, i) => <p key={i} className="text-[10px] text-amber-600 pl-2">· {iss}</p>)}
+              </div>
+            )}
+            {cookies.cookie_details?.length > 0 && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-[10px]">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      {['Name','Secure','HttpOnly','SameSite'].map(h => (
+                        <th key={h} className="text-left pb-1 font-bold text-slate-400 pr-3">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cookies.cookie_details.map((c, j) => (
+                      <tr key={j} className="border-b border-slate-50">
+                        <td className="py-1 pr-3 font-mono text-slate-700">{c.name}</td>
+                        <td className="py-1 pr-3">{c.secure    ? <RiCheckLine className="text-emerald-500" /> : <RiCloseLine className="text-red-400" />}</td>
+                        <td className="py-1 pr-3">{c.httponly  ? <RiCheckLine className="text-emerald-500" /> : <RiCloseLine className="text-red-400" />}</td>
+                        <td className="py-1 text-slate-600">{c.samesite || 'Not Set'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {cookies.error && <MetaRow label="Error" value={cookies.error} warn />}
+          </SubSection>
+        )}
+
+        {/* ── HTML Analysis ── */}
+        {html.status !== undefined && html.status !== 'skipped' && (
+          <SubSection icon={<RiCodeSSlashLine />} title="HTML Content Analysis">
+            <BoolRow label="Login Form"       value={html.has_login_form} />
+            <BoolRow label="Password Input"   value={html.has_password_input} />
+            <BoolRow label="External Form"    value={html.external_form_action} />
+            <BoolRow label="iFrames"          value={html.has_iframe} />
+            <BoolRow label="Hidden Elements"  value={html.has_hidden_elements} />
+            <MetaRow label="Suspicious Scripts" value={html.suspicious_scripts ?? 0} warn={(html.suspicious_scripts || 0) > 0} />
+            <BoolRow label="Favicon Mismatch" value={html.favicon_mismatch} />
+            {html.risk_flags?.length > 0 && (
+              <div className="mt-1">
+                <p className="text-[10px] font-bold text-slate-400 mb-0.5">Risk Flags</p>
+                {html.risk_flags.map((f, i) => <p key={i} className="text-[10px] text-red-600 pl-2">· {f}</p>)}
+              </div>
+            )}
+            {html.error && <MetaRow label="Note" value={html.error} warn />}
+          </SubSection>
+        )}
+
+        {/* ── URL Encoding ── */}
+        {encoding.is_encoded != null && (
+          <SubSection icon={<RiServerLine />} title="URL Encoding Analysis">
+            <BoolRow label="Percent Encoded" value={encoding.is_encoded} />
+            <BoolRow label="Double Encoded"  value={encoding.is_double_encoded} />
+            {encoding.decoded_url && (
+              <div className="mt-1">
+                <p className="text-[10px] font-bold text-slate-400 mb-0.5">Decoded URL</p>
+                <p className="text-[10px] font-mono text-slate-600 break-all pl-2">{encoding.decoded_url.substring(0, 120)}</p>
+              </div>
+            )}
+            {encoding.issues?.length > 0 && encoding.issues.map((iss, i) => (
+              <p key={i} className="text-[10px] text-amber-600 pl-2">· {iss}</p>
+            ))}
+          </SubSection>
+        )}
+
+        {/* ── URL Format ── */}
+        {(fmt.url_length || m.url_length) && (
+          <SubSection icon={<RiLinksLine />} title="URL Format Analysis">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <MetaRow label="Scheme"       value={fmt.scheme || m.url_scheme} />
+              <MetaRow label="URL Length"   value={fmt.url_length || m.url_length} />
+              <MetaRow label="Path Depth"   value={fmt.path_depth || m.path_depth} />
+              <MetaRow label="Query Params" value={fmt.query_param_count || m.query_params} />
+              <MetaRow label="Readability"  value={fmt.readability_score != null ? `${fmt.readability_score}/10` : '—'} />
+            </div>
+            <div className="mt-1.5 space-y-1">
+              <BoolRow label="Is IP Address"  value={fmt.is_ip_address  || m.is_ip_address} />
+              <BoolRow label="Uses HTTPS"     value={fmt.uses_https     || m.uses_https} trueOk />
+              <BoolRow label="Brand Keywords" value={fmt.has_brand_keywords || m.has_brand_words} />
+            </div>
+          </SubSection>
+        )}
+
+        {/* Campaign fingerprint */}
+        {m.fingerprint && (
+          <div className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100">
+            <RiFingerprint2Line className="text-slate-400 text-xs flex-shrink-0" />
+            <span className="text-[10px] font-bold text-slate-400 flex-shrink-0">Fingerprint</span>
+            <code className="text-[10px] text-slate-600 font-mono break-all">{m.fingerprint.substring(0, 48)}</code>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Main EmailDetail component ─────────────────────────────────────────────────
 export default function EmailDetail({ emailId, onBack }) {
   const [email, setEmail]           = useState(null)
@@ -1126,6 +1368,147 @@ export default function EmailDetail({ emailId, onBack }) {
             )}
           </AnalysisSection>
 
+          {/* ── 2b. Ollama LLM Threat Analysis ── */}
+          <AnalysisSection
+            icon={<RiBrainLine />}
+            title="Ollama LLM Threat Analysis"
+            defaultOpen={!!analysis?.llm_analysis?.threat_type && analysis?.llm_analysis?.threat_type !== 'UNKNOWN'}
+            loading={analyzing && !analysis?.llm_analysis}
+            badge={analysis?.llm_analysis && (() => {
+              const llm = analysis.llm_analysis
+              if (!llm.ollama_available) return (
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-slate-50 text-slate-500 border border-slate-200">Offline</span>
+              )
+              const tt = llm.threat_type || 'UNKNOWN'
+              const colors = {
+                PHISHING: 'bg-red-50 text-red-700 border-red-200',
+                FRAUD:    'bg-red-50 text-red-700 border-red-200',
+                SCAM:     'bg-amber-50 text-amber-700 border-amber-200',
+                SPAM:     'bg-amber-50 text-amber-700 border-amber-200',
+                LEGITIMATE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+              }
+              return <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${colors[tt] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>{tt}</span>
+            })()}
+          >
+            {analysis?.llm_analysis ? (
+              <div className="space-y-3">
+                {!analysis.llm_analysis.ollama_available ? (
+                  <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <RiInformationLine className="text-slate-400 flex-shrink-0" />
+                    <p className="text-[12px] text-slate-500">
+                      Ollama is offline — start it with <code className="bg-slate-100 px-1 rounded">ollama serve</code> to enable LLM analysis.
+                      {analysis.llm_analysis.error && <span className="block text-[10px] text-slate-400 mt-1">{analysis.llm_analysis.error}</span>}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Summary */}
+                    {analysis.llm_analysis.summary && (
+                      <div className="p-3 bg-sky-50 border border-sky-100 rounded-xl">
+                        <p className="text-[11px] font-bold text-sky-700 uppercase tracking-wide mb-1">AI Summary</p>
+                        <p className="text-[13px] text-slate-700 leading-relaxed">{analysis.llm_analysis.summary}</p>
+                      </div>
+                    )}
+
+                    {/* Scores row */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        { label: 'Threat Type',    value: analysis.llm_analysis.threat_type || '—' },
+                        { label: 'Urgency Level',  value: analysis.llm_analysis.urgency_level || '—' },
+                        { label: 'Urgency Score',  value: `${analysis.llm_analysis.urgency_score ?? 0}/100` },
+                        { label: 'Recommendation', value: analysis.llm_analysis.recommendation || '—' },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                          <p className="text-[13px] font-bold text-slate-800 mt-0.5 truncate">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* LLM risk score bar */}
+                    <ScoreBar
+                      label="LLM Risk Score"
+                      value={analysis.llm_analysis.overall_risk_score || 0}
+                      color={
+                        (analysis.llm_analysis.overall_risk_score || 0) >= 70 ? 'bg-red-500' :
+                        (analysis.llm_analysis.overall_risk_score || 0) >= 40 ? 'bg-amber-500' : 'bg-emerald-500'
+                      }
+                    />
+
+                    {/* Suspicious phrases */}
+                    {analysis.llm_analysis.suspicious_phrases?.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">Suspicious Phrases Detected</p>
+                        <div className="flex flex-wrap gap-1">
+                          {analysis.llm_analysis.suspicious_phrases.map((p, i) => (
+                            <IndicatorChip key={i} text={`"${p}"`} level="warn" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Flags */}
+                    {analysis.llm_analysis.flags?.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">LLM Flags</p>
+                        <div className="flex flex-wrap gap-1">
+                          {analysis.llm_analysis.flags.map((f, i) => (
+                            <IndicatorChip key={i} text={f} level="danger" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extracted entities */}
+                    {(() => {
+                      const ent = analysis.llm_analysis.extracted_entities || {}
+                      const hasEntities = (ent.emails?.length || 0) + (ent.accounts?.length || 0) +
+                                          (ent.phones?.length || 0) + (ent.names?.length || 0) > 0
+                      if (!hasEntities) return null
+                      return (
+                        <div className="border border-slate-100 rounded-xl overflow-hidden">
+                          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100">
+                            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Extracted Entities</p>
+                          </div>
+                          <div className="px-4 py-3 space-y-2">
+                            {ent.emails?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-16 flex-shrink-0 mt-0.5">Emails</span>
+                                <div className="flex flex-wrap gap-1">{ent.emails.map((e, i) => <code key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{e}</code>)}</div>
+                              </div>
+                            )}
+                            {ent.accounts?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-16 flex-shrink-0 mt-0.5">Accounts</span>
+                                <div className="flex flex-wrap gap-1">{ent.accounts.map((a, i) => <code key={i} className="text-[10px] bg-amber-50 px-1.5 py-0.5 rounded text-amber-700">{a}</code>)}</div>
+                              </div>
+                            )}
+                            {ent.phones?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-16 flex-shrink-0 mt-0.5">Phones</span>
+                                <div className="flex flex-wrap gap-1">{ent.phones.map((p, i) => <code key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{p}</code>)}</div>
+                              </div>
+                            )}
+                            {ent.names?.length > 0 && (
+                              <div className="flex gap-2 items-start">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase w-16 flex-shrink-0 mt-0.5">Names</span>
+                                <div className="flex flex-wrap gap-1">{ent.names.map((n, i) => <span key={i} className="text-[10px] bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded text-indigo-700">{n}</span>)}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    <p className="text-[10px] text-slate-400">Model: qwen3:8b · via Ollama</p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="text-[12px] text-slate-400 italic">Awaiting analysis…</p>
+            )}
+          </AnalysisSection>
+
           {/* ── 3. Credential Leakage ── */}
           <AnalysisSection
             icon={<RiLockLine />}
@@ -1183,7 +1566,7 @@ export default function EmailDetail({ emailId, onBack }) {
             title={`Web Spoofing & URL Analysis (${urls.length} URLs)`}
             loading={analyzing && !analysis?.url_scan}
             badge={analysis?.url_scan && (() => {
-              const dangerous = analysis.url_scan.filter(u => u.verdict?.toUpperCase() === 'DANGEROUS').length
+              const dangerous  = analysis.url_scan.filter(u => u.verdict?.toUpperCase() === 'DANGEROUS').length
               const suspicious = analysis.url_scan.filter(u => u.verdict?.toUpperCase() === 'SUSPICIOUS').length
               return dangerous > 0
                 ? <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-50 text-red-700 border border-red-200">{dangerous} Dangerous</span>
@@ -1193,8 +1576,32 @@ export default function EmailDetail({ emailId, onBack }) {
             })()}
           >
             {analysis?.url_scan?.length > 0 ? (
-              <div className="space-y-2">
-                {analysis.url_scan.map((u, i) => <URLResultRow key={i} result={u} />)}
+              <div className="space-y-4">
+                {/* Summary stats */}
+                {(() => {
+                  const results = analysis.url_scan
+                  const nDangerous  = results.filter(u => u.verdict?.toUpperCase() === 'DANGEROUS').length
+                  const nSuspicious = results.filter(u => u.verdict?.toUpperCase() === 'SUSPICIOUS').length
+                  const nSafe       = results.filter(u => !['DANGEROUS','SUSPICIOUS'].includes(u.verdict?.toUpperCase())).length
+                  return (
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { label: 'Total URLs',   value: results.length, cls: 'text-slate-800' },
+                        { label: 'Dangerous',    value: nDangerous,     cls: 'text-red-700' },
+                        { label: 'Suspicious',   value: nSuspicious,    cls: 'text-amber-700' },
+                        { label: 'Safe',         value: nSafe,          cls: 'text-emerald-700' },
+                      ].map(({ label, value, cls }) => (
+                        <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                          <p className={`text-[18px] font-bold mt-0.5 ${cls}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+
+                {/* Per-URL full detail cards (same layout as WebsiteSpoofing tab) */}
+                {analysis.url_scan.map((u, i) => <URLDetailCard key={i} result={u} index={i} />)}
               </div>
             ) : urls.length === 0 ? (
               <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
@@ -1205,6 +1612,131 @@ export default function EmailDetail({ emailId, onBack }) {
               <p className="text-[12px] text-slate-400 italic">{urls.length} URLs pending scan…</p>
             )}
           </AnalysisSection>
+
+          {/* ── 4b. Voice Deepfake Analysis ──*/}
+          {(analysis?.voice_analysis?.total_audio_files > 0 || (analyzing && !analysis?.voice_analysis)) && (
+            <AnalysisSection
+              icon={<RiMicLine />}
+              title="Voice Deepfake Analysis"
+              defaultOpen
+              loading={analyzing && !analysis?.voice_analysis}
+              badge={analysis?.voice_analysis && (
+                analysis.voice_analysis.flagged_as_fake > 0
+                  ? <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-red-50 text-red-700 border border-red-200">
+                      {analysis.voice_analysis.flagged_as_fake} Fake Detected
+                    </span>
+                  : <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      All Authentic
+                    </span>
+              )}
+            >
+              {analysis?.voice_analysis ? (
+                <div className="space-y-3">
+                  {/* Summary row */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: 'Audio Files',  value: analysis.voice_analysis.total_audio_files },
+                      { label: 'Scanned',      value: analysis.voice_analysis.scanned },
+                      { label: 'Skipped',      value: analysis.voice_analysis.skipped },
+                      { label: 'Fake Detected',value: analysis.voice_analysis.flagged_as_fake },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                        <p className="text-[16px] font-bold text-slate-800 mt-0.5">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Per-file results */}
+                  {analysis.voice_analysis.results?.map((v, i) => {
+                    const verdict  = (v.verdict || 'UNKNOWN').toUpperCase()
+                    const isFake   = verdict.includes('FAKE')
+                    const isReview = verdict.includes('REVIEW')
+                    const isSkip   = verdict.includes('SKIP')
+                    const score    = v.risk_score || 0
+                    const barColor = isFake ? 'bg-red-500' : isReview ? 'bg-amber-500' : 'bg-emerald-500'
+                    const badgeCls = isFake
+                      ? 'bg-red-50 text-red-700 border-red-200'
+                      : isReview
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+
+                    return (
+                      <div key={i} className="rounded-xl border border-slate-200 overflow-hidden">
+                        {/* File header */}
+                        <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 border-b border-slate-100">
+                          <RiMicLine className="text-slate-400 flex-shrink-0" />
+                          <span className="font-mono text-[12px] text-slate-700 flex-1 truncate">{v.filename}</span>
+                          <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${badgeCls}`}>
+                            {verdict}
+                          </span>
+                        </div>
+                        {/* Details */}
+                        {!isSkip && (
+                          <div className="px-4 py-3 space-y-2.5">
+                            <ScoreBar label="Risk Score" value={score} color={barColor} />
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                { label: 'Risk Tier',        value: v.risk_tier || '—' },
+                                { label: 'Confidence',       value: v.confidence || '—' },
+                                { label: 'best_eer Score',   value: v.best_eer_score != null ? `${(v.best_eer_score * 100).toFixed(1)}%` : '—' },
+                                { label: 'XGBoost Score',    value: v.xgboost_score != null ? `${(v.xgboost_score * 100).toFixed(1)}%` : '—' },
+                              ].map(({ label, value }) => (
+                                <div key={label} className="p-2 bg-slate-50 border border-slate-100 rounded-lg text-center">
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                                  <p className="text-[12px] font-bold text-slate-700 mt-0.5">{value}</p>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                              <span className={`flex items-center gap-1 ${v.model_agreement ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                {v.model_agreement ? <RiCheckLine /> : <RiAlertLine />}
+                                Models {v.model_agreement ? 'agree' : 'disagree'}
+                              </span>
+                              <span>·</span>
+                              <span>Action: <strong className="text-slate-700">{v.recommended_action || '—'}</strong></span>
+                              {v.processing_ms > 0 && <><span>·</span><span>{v.processing_ms}ms</span></>}
+                            </div>
+
+                            {v.indicators?.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Voice Indicators</p>
+                                <div className="space-y-0.5">
+                                  {v.indicators.map((ind, j) => (
+                                    <p key={j} className="text-[11px] text-amber-700 pl-2">· {ind}</p>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {v.error && (
+                              <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                                ⚠️ {v.error}
+                              </p>
+                            )}
+
+                            <p className="text-[10px] text-slate-400">
+                              Model: {v.model_used || 'best_eer_v2.pt + XGBoost'} · MFCC features: {v.mfcc_features_used ?? 40}
+                              {v.chunks_analyzed > 0 && ` · ${v.chunks_analyzed} chunks`}
+                            </p>
+                          </div>
+                        )}
+                        {isSkip && (
+                          <div className="px-4 py-3 text-[12px] text-slate-500">
+                            ⏭️ Skipped — {v.skip_reason || 'no audio content'}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="text-[12px] text-slate-400 italic">Awaiting analysis…</p>
+              )}
+            </AnalysisSection>
+          )}
 
           {/* ── 5. Attachments ── */}
           {attachments.length > 0 && (

@@ -12,6 +12,7 @@ import {
   RiDatabaseLine,
   RiRobotFill,
   RiInboxLine,
+  RiBrainLine,
 } from 'react-icons/ri'
 
 /* ──────────────────────────────────────────────
@@ -67,6 +68,7 @@ export const ADMIN_NAV_ITEMS = [
     items: [
       { id: 'modelanalytics',  label: 'Model Analytics',     icon: RiLineChartLine },
       { id: 'modelpolicies',   label: 'DLP Policies',        icon: RiDatabaseLine  },
+      { id: 'modelretraining', label: 'Model Retraining',    icon: RiBrainLine     },
     ],
   },
 ]
@@ -88,4 +90,5 @@ export const PAGE_META = {
   dlpguardian:    { title: 'DLP Guardian',               sub: 'Guardrail-DLP · Block sensitive data to ChatGPT/Claude/Gemini' },
   modelanalytics: { title: 'Model Analytics',            sub: 'Detection model performance · Accuracy · Drift · Retraining' },
   modelpolicies:  { title: 'DLP Policies',               sub: 'Configure data classification rules & enforcement policies' },
+  modelretraining: { title: 'Model Retraining Centre', sub: 'Human-in-the-loop feedback pipeline · Queue management · On-demand model improvement' },
 }

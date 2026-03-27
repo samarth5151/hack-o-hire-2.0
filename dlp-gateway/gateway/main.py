@@ -21,7 +21,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_session, engine
-from db.models import Base, DLPEvent, UserRiskProfile, Alert
+from db.models import Base, DLPEvent, UserRiskProfile, Alert, DLPPolicy
 from detection.engine import dlp_engine
 from detection.classifier import doc_classifier, RESTRICTED, CONFIDENTIAL, INTERNAL, PUBLIC
 from policy.engine import policy_engine
@@ -638,3 +638,174 @@ async def ws_live(ws: WebSocket):
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "DLP Gateway", "version": "3.0.0"}
+
+
+# ── DLP Policy CRUD (admin) ───────────────────────────────────────────────────
+
+class PolicyCreate(BaseModel):
+    name:        str
+    description: str = ""
+    engine_type: str = "Regex"
+    action:      str = "Block"
+    departments: list = []
+    patterns:    list = []
+    is_active:   bool = True
+
+
+class PolicyUpdate(BaseModel):
+    name:        Optional[str] = None
+    description: Optional[str] = None
+    engine_type: Optional[str] = None
+    action:      Optional[str] = None
+    departments: Optional[list] = None
+    patterns:    Optional[list] = None
+
+
+def _policy_row(p: DLPPolicy) -> dict:
+    return {
+        "id":          p.id,
+        "name":        p.name,
+        "description": p.description or "",
+        "engine_type": p.engine_type,
+        "action":      p.action,
+        "is_active":   p.is_active,
+        "departments": p.departments or [],
+        "patterns":    p.patterns or [],
+        "created_at":  p.created_at.isoformat() if p.created_at else None,
+        "updated_at":  p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+@app.get("/admin/policies")
+async def list_policies(
+    session: AsyncSession = Depends(get_session),
+    _user:   dict = Depends(get_current_user),
+):
+    rows = (await session.scalars(select(DLPPolicy).order_by(DLPPolicy.id))).all()
+    return [_policy_row(p) for p in rows]
+
+
+@app.post("/admin/policies", status_code=201)
+async def create_policy(
+    body:    PolicyCreate,
+    session: AsyncSession = Depends(get_session),
+    _user:   dict = Depends(require_admin),
+):
+    p = DLPPolicy(
+        name=body.name,
+        description=body.description,
+        engine_type=body.engine_type,
+        action=body.action,
+        is_active=body.is_active,
+        departments=body.departments,
+        patterns=body.patterns,
+    )
+    session.add(p)
+    await session.commit()
+    await session.refresh(p)
+    return _policy_row(p)
+
+
+@app.put("/admin/policies/{policy_id}")
+async def update_policy(
+    policy_id: int,
+    body:      PolicyUpdate,
+    session:   AsyncSession = Depends(get_session),
+    _user:     dict = Depends(require_admin),
+):
+    p = await session.get(DLPPolicy, policy_id)
+    if not p:
+        raise HTTPException(404, "Policy not found")
+    if body.name        is not None: p.name        = body.name
+    if body.description is not None: p.description = body.description
+    if body.engine_type is not None: p.engine_type = body.engine_type
+    if body.action      is not None: p.action      = body.action
+    if body.departments is not None: p.departments = body.departments
+    if body.patterns    is not None: p.patterns    = body.patterns
+    p.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(p)
+    return _policy_row(p)
+
+
+@app.patch("/admin/policies/{policy_id}/toggle")
+async def toggle_policy(
+    policy_id: int,
+    session:   AsyncSession = Depends(get_session),
+    _user:     dict = Depends(require_admin),
+):
+    p = await session.get(DLPPolicy, policy_id)
+    if not p:
+        raise HTTPException(404, "Policy not found")
+    p.is_active  = not p.is_active
+    p.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(p)
+    return _policy_row(p)
+
+
+@app.delete("/admin/policies/{policy_id}", status_code=204)
+async def delete_policy(
+    policy_id: int,
+    session:   AsyncSession = Depends(get_session),
+    _user:     dict = Depends(require_admin),
+):
+    p = await session.get(DLPPolicy, policy_id)
+    if not p:
+        raise HTTPException(404, "Policy not found")
+    await session.delete(p)
+    await session.commit()
+
+
+@app.post("/admin/policies/seed")
+async def seed_policies(
+    session: AsyncSession = Depends(get_session),
+    _user:   dict = Depends(require_admin),
+):
+    """Seed the DB from policies.yaml (skips duplicates by name)."""
+    import yaml
+    from pathlib import Path
+    yaml_path = Path(__file__).parent.parent / "policy" / "policies.yaml"
+    try:
+        with open(yaml_path) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as e:
+        raise HTTPException(500, f"Could not load policies.yaml: {e}")
+
+    existing_names = {
+        r for r in (await session.scalars(select(DLPPolicy.name))).all()
+    }
+    created = []
+    for dept, rules in raw.items():
+        for cat in rules.get("block", []):
+            name = f"{dept.title()} — {cat.replace('_', ' ').title()} (Block)"
+            if name not in existing_names:
+                p = DLPPolicy(
+                    name=name,
+                    description=f"Auto-seeded from policies.yaml for {dept} department.",
+                    engine_type="Regex",
+                    action="Block",
+                    is_active=True,
+                    departments=[dept],
+                    patterns=[cat],
+                )
+                session.add(p)
+                existing_names.add(name)
+                created.append(name)
+        for cat in rules.get("warn", []):
+            name = f"{dept.title()} — {cat.replace('_', ' ').title()} (Warn)"
+            if name not in existing_names:
+                p = DLPPolicy(
+                    name=name,
+                    description=f"Auto-seeded from policies.yaml for {dept} department.",
+                    engine_type="Regex",
+                    action="Alert",
+                    is_active=True,
+                    departments=[dept],
+                    patterns=[cat],
+                )
+                session.add(p)
+                existing_names.add(name)
+                created.append(name)
+    await session.commit()
+    return {"seeded": len(created), "policies": created}

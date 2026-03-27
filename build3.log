@@ -1,0 +1,319 @@
+ Image hack-o-hire-2-frontend-builder Building 
+ Image hack-o-hire-2-attachment-scanner Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.06kB done
+#1 DONE 0.0s
+
+#2 [attachment-scanner internal] load build definition from Dockerfile
+#2 transferring dockerfile: 405B 0.0s done
+#2 DONE 0.0s
+
+#3 [frontend-builder internal] load build definition from Dockerfile
+#3 transferring dockerfile: 282B 0.0s done
+#3 DONE 0.1s
+
+#4 [frontend-builder internal] load metadata for docker.io/library/node:20-alpine
+#4 ...
+
+#5 [auth] library/node:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#6 [auth] library/alpine:pull token for registry-1.docker.io
+#6 DONE 0.0s
+
+#7 [auth] library/python:pull token for registry-1.docker.io
+#7 DONE 0.0s
+
+#8 [frontend-builder internal] load metadata for docker.io/library/alpine:3.18
+#8 ...
+
+#4 [frontend-builder internal] load metadata for docker.io/library/node:20-alpine
+#4 DONE 2.1s
+
+#9 [attachment-scanner internal] load metadata for docker.io/library/python:3.10-slim
+#9 DONE 2.1s
+
+#8 [frontend-builder internal] load metadata for docker.io/library/alpine:3.18
+#8 DONE 2.2s
+
+#10 [attachment-scanner internal] load .dockerignore
+#10 transferring context: 2B 0.0s done
+#10 DONE 0.0s
+
+#11 [frontend-builder internal] load .dockerignore
+#11 transferring context: 2B 0.0s done
+#11 DONE 0.0s
+
+#12 [frontend-builder internal] load build context
+#12 DONE 0.0s
+
+#13 [attachment-scanner 1/6] FROM docker.io/library/python:3.10-slim@sha256:4ba18b066cee17f2696cf9a2ba564d7d5eb05a91d6a949326780aa7c6912160d
+#13 resolve docker.io/library/python:3.10-slim@sha256:4ba18b066cee17f2696cf9a2ba564d7d5eb05a91d6a949326780aa7c6912160d 0.0s done
+#13 DONE 0.0s
+
+#14 [frontend-builder stage-1 1/3] FROM docker.io/library/alpine:3.18@sha256:de0eb0b3f2a47ba1eb89389859a9bd88b28e82f5826b6969ad604979713c2d4f
+#14 resolve docker.io/library/alpine:3.18@sha256:de0eb0b3f2a47ba1eb89389859a9bd88b28e82f5826b6969ad604979713c2d4f 0.0s done
+#14 DONE 0.0s
+
+#15 [frontend-builder builder 1/6] FROM docker.io/library/node:20-alpine@sha256:f598378b5240225e6beab68fa9f356db1fb8efe55173e6d4d8153113bb8f333c
+#15 resolve docker.io/library/node:20-alpine@sha256:f598378b5240225e6beab68fa9f356db1fb8efe55173e6d4d8153113bb8f333c 0.0s done
+#15 DONE 0.0s
+
+#16 [attachment-scanner internal] load build context
+#16 transferring context: 151.19kB 0.1s done
+#16 DONE 0.1s
+
+#17 [attachment-scanner 2/6] WORKDIR /app
+#17 CACHED
+
+#18 [attachment-scanner 3/6] RUN apt-get update && apt-get install -y     libmagic1     && rm -rf /var/lib/apt/lists/*
+#18 CACHED
+
+#19 [attachment-scanner 4/6] COPY requirements.txt .
+#19 DONE 0.0s
+
+#12 [frontend-builder internal] load build context
+#12 transferring context: 553.71kB 0.4s done
+#12 DONE 0.4s
+
+#20 [frontend-builder builder 2/6] WORKDIR /app
+#20 CACHED
+
+#21 [frontend-builder builder 3/6] COPY package.json package-lock.json ./
+#21 CACHED
+
+#22 [frontend-builder builder 4/6] RUN npm ci
+#22 CACHED
+
+#23 [frontend-builder builder 5/6] COPY . .
+#23 DONE 3.6s
+
+#24 [frontend-builder builder 6/6] RUN npm run build
+#24 0.609 
+#24 0.609 > aegisai@1.0.0 build
+#24 0.609 > vite build
+#24 0.609 
+#24 1.011 vite v5.4.21 building for production...
+#24 1.059 transforming...
+#24 5.626 Γ£ô 1210 modules transformed.
+#24 6.213 rendering chunks...
+#24 ...
+
+#25 [attachment-scanner 5/6] RUN pip install --no-cache-dir -r requirements.txt
+#25 2.730 Collecting fastapi
+#25 3.246   Downloading fastapi-0.135.2-py3-none-any.whl (117 kB)
+#25 3.529      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 117.4/117.4 kB 386.8 kB/s eta 0:00:00
+#25 3.724 Collecting uvicorn
+#25 3.853   Downloading uvicorn-0.42.0-py3-none-any.whl (68 kB)
+#25 3.862      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 68.8/68.8 kB 8.0 MB/s eta 0:00:00
+#25 3.947 Collecting python-multipart
+#25 4.130   Downloading python_multipart-0.0.22-py3-none-any.whl (24 kB)
+#25 5.034 Collecting pymupdf
+#25 5.093   Downloading pymupdf-1.27.2.2-cp310-abi3-manylinux_2_28_x86_64.whl (24.9 MB)
+#25 ...
+
+#24 [frontend-builder builder 6/6] RUN npm run build
+#24 6.233 computing gzip size...
+#24 6.262 dist/index.html                   0.79 kB Γöé gzip:   0.48 kB
+#24 6.262 dist/assets/index-DLvjK42N.css   57.40 kB Γöé gzip:  10.01 kB
+#24 6.262 dist/assets/index-Dc57S1G5.js   960.05 kB Γöé gzip: 268.66 kB
+#24 6.262 
+#24 6.262 (!) Some chunks are larger than 500 kB after minification. Consider:
+#24 6.262 - Using dynamic import() to code-split the application
+#24 6.262 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+#24 6.262 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+#24 6.263 Γ£ô built in 5.23s
+#24 DONE 6.5s
+
+#25 [attachment-scanner 5/6] RUN pip install --no-cache-dir -r requirements.txt
+#25 ...
+
+#26 [frontend-builder stage-1 2/3] WORKDIR /built_dist
+#26 CACHED
+
+#27 [frontend-builder stage-1 3/3] COPY --from=builder /app/dist .
+#27 DONE 0.1s
+
+#28 [frontend-builder] exporting to image
+#28 exporting layers 0.1s done
+#28 exporting manifest sha256:3dc9eb9f606ef703074c118ada0757fddec7edd6bbae413e399ce93e291fd0f1 0.0s done
+#28 exporting config sha256:7b3f8bb109bf9ed8c59f4d80a8e95a555a545c2c5027150aa428876fa0f64ecc 0.0s done
+#28 exporting attestation manifest sha256:7373ee722865b04008b790d70e576640909eec2262ec0c03acfca40d81176881 0.0s done
+#28 exporting manifest list sha256:8f7749af4e106cb7442ac6391ab1635db2969059a5647227823c4ba49548cd6d 0.0s done
+#28 naming to docker.io/library/hack-o-hire-2-frontend-builder:latest done
+#28 unpacking to docker.io/library/hack-o-hire-2-frontend-builder:latest 0.1s done
+#28 DONE 0.3s
+
+#29 [frontend-builder] resolving provenance for metadata file
+#29 DONE 0.0s
+
+#25 [attachment-scanner 5/6] RUN pip install --no-cache-dir -r requirements.txt
+#25 11.48      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 24.9/24.9 MB 4.2 MB/s eta 0:00:00
+#25 11.96 Collecting pillow
+#25 12.01   Downloading pillow-12.1.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (7.0 MB)
+#25 13.36      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 7.0/7.0 MB 5.2 MB/s eta 0:00:00
+#25 13.41 Collecting python-docx
+#25 13.44   Downloading python_docx-1.2.0-py3-none-any.whl (252 kB)
+#25 13.51      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 253.0/253.0 kB 3.9 MB/s eta 0:00:00
+#25 13.82 Collecting pydantic
+#25 13.85   Downloading pydantic-2.12.5-py3-none-any.whl (463 kB)
+#25 13.99      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 463.6/463.6 kB 3.3 MB/s eta 0:00:00
+#25 14.26 Collecting python-magic
+#25 14.29   Downloading python_magic-0.4.27-py2.py3-none-any.whl (13 kB)
+#25 15.24 Collecting pikepdf
+#25 15.29   Downloading pikepdf-10.5.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (2.7 MB)
+#25 15.76      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 2.7/2.7 MB 5.8 MB/s eta 0:00:00
+#25 16.03 Collecting pdfminer
+#25 16.08   Downloading pdfminer-20191125.tar.gz (4.2 MB)
+#25 16.94      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 4.2/4.2 MB 4.9 MB/s eta 0:00:00
+#25 17.08   Preparing metadata (setup.py): started
+#25 17.45   Preparing metadata (setup.py): finished with status 'done'
+#25 17.71 Collecting oletools
+#25 17.74   Downloading oletools-0.60.2-py2.py3-none-any.whl (989 kB)
+#25 17.93      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 989.4/989.4 kB 5.3 MB/s eta 0:00:00
+#25 18.26 Collecting pefile
+#25 18.29   Downloading pefile-2024.8.26-py3-none-any.whl (74 kB)
+#25 18.31      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 74.8/74.8 kB 3.4 MB/s eta 0:00:00
+#25 18.61 Collecting py7zr
+#25 18.64   Downloading py7zr-1.1.0-py3-none-any.whl (71 kB)
+#25 18.66      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 71.3/71.3 kB 9.7 MB/s eta 0:00:00
+#25 18.98 Collecting yara-python
+#25 19.06   Downloading yara_python-4.5.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+#25 19.43      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 2.3/2.3 MB 6.3 MB/s eta 0:00:00
+#25 19.50 Collecting requests
+#25 19.54   Downloading requests-2.33.0-py3-none-any.whl (65 kB)
+#25 19.56      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 65.0/65.0 kB 4.7 MB/s eta 0:00:00
+#25 19.75 Collecting psycopg2-binary
+#25 19.82   Downloading psycopg2_binary-2.9.11-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.2 MB)
+#25 20.77      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 4.2/4.2 MB 4.4 MB/s eta 0:00:00
+#25 20.89 Collecting starlette>=0.46.0
+#25 20.94   Downloading starlette-1.0.0-py3-none-any.whl (72 kB)
+#25 20.95      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 72.7/72.7 kB 7.9 MB/s eta 0:00:00
+#25 21.01 Collecting annotated-doc>=0.0.2
+#25 21.06   Downloading annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+#25 21.11 Collecting typing-inspection>=0.4.2
+#25 21.15   Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+#25 21.21 Collecting typing-extensions>=4.8.0
+#25 21.25   Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+#25 21.25      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 44.6/44.6 kB 96.7 MB/s eta 0:00:00
+#25 21.37 Collecting click>=7.0
+#25 21.42   Downloading click-8.3.1-py3-none-any.whl (108 kB)
+#25 21.44      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 108.3/108.3 kB 6.6 MB/s eta 0:00:00
+#25 21.51 Collecting h11>=0.8
+#25 21.59   Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+#25 22.16 Collecting lxml>=3.1.0
+#25 22.18   Downloading lxml-6.0.2-cp310-cp310-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (5.3 MB)
+#25 23.35      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 5.3/5.3 MB 4.6 MB/s eta 0:00:00
+#25 23.42 Collecting annotated-types>=0.6.0
+#25 23.46   Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+#25 25.13 Collecting pydantic-core==2.41.5
+#25 25.16   Downloading pydantic_core-2.41.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+#25 25.59      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 2.1/2.1 MB 4.9 MB/s eta 0:00:00
+#25 25.72 Collecting Deprecated
+#25 25.77   Downloading deprecated-1.3.1-py2.py3-none-any.whl (11 kB)
+#25 25.84 Collecting packaging
+#25 25.87   Downloading packaging-26.0-py3-none-any.whl (74 kB)
+#25 25.90      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 74.4/74.4 kB 5.1 MB/s eta 0:00:00
+#25 26.32 Collecting pycryptodome
+#25 26.38   Downloading pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+#25 26.85      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 2.3/2.3 MB 4.8 MB/s eta 0:00:00
+#25 27.13 Collecting colorclass
+#25 27.16   Downloading colorclass-2.2.2-py2.py3-none-any.whl (18 kB)
+#25 27.39 Collecting pcodedmp>=1.2.5
+#25 27.42   Downloading pcodedmp-1.2.6-py2.py3-none-any.whl (30 kB)
+#25 27.68 Collecting easygui
+#25 27.75   Downloading easygui-0.98.3-py2.py3-none-any.whl (92 kB)
+#25 27.76      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 92.7/92.7 kB 6.7 MB/s eta 0:00:00
+#25 27.86 Collecting pyparsing<4,>=2.1.0
+#25 27.91   Downloading pyparsing-3.3.2-py3-none-any.whl (122 kB)
+#25 27.94      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 122.8/122.8 kB 4.9 MB/s eta 0:00:00
+#25 28.20 Collecting msoffcrypto-tool
+#25 28.25   Downloading msoffcrypto_tool-6.0.0-py3-none-any.whl (48 kB)
+#25 28.28      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 48.8/48.8 kB 2.1 MB/s eta 0:00:00
+#25 28.33 Collecting olefile>=0.46
+#25 28.36   Downloading olefile-0.47-py2.py3-none-any.whl (114 kB)
+#25 28.40      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 114.6/114.6 kB 3.0 MB/s eta 0:00:00
+#25 28.88 Collecting pyppmd>=1.3.1
+#25 28.94   Downloading pyppmd-1.3.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (140 kB)
+#25 28.98      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 141.0/141.0 kB 3.6 MB/s eta 0:00:00
+#25 29.37 Collecting inflate64>=1.0.4
+#25 29.41   Downloading inflate64-1.0.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (96 kB)
+#25 29.44      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 96.6/96.6 kB 5.6 MB/s eta 0:00:00
+#25 29.82 Collecting backports.zstd>=1.0.0
+#25 29.87   Downloading backports_zstd-1.3.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (491 kB)
+#25 29.95      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 491.1/491.1 kB 6.3 MB/s eta 0:00:00
+#25 30.12 Collecting psutil
+#25 30.16   Downloading psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+#25 30.19      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 155.6/155.6 kB 7.1 MB/s eta 0:00:00
+#25 30.41 Collecting multivolumefile>=0.2.3
+#25 30.46   Downloading multivolumefile-0.2.3-py3-none-any.whl (17 kB)
+#25 30.56 Collecting brotli>=1.2.0
+#25 30.60   Downloading brotli-1.2.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.4 MB)
+#25 30.88      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 1.4/1.4 MB 5.3 MB/s eta 0:00:00
+#25 31.24 Collecting pybcj>=1.0.6
+#25 31.29   Downloading pybcj-1.0.7-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (49 kB)
+#25 31.31      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 49.5/49.5 kB 4.2 MB/s eta 0:00:00
+#25 31.56 Collecting texttable
+#25 31.61   Downloading texttable-1.7.0-py2.py3-none-any.whl (10 kB)
+#25 32.01 Collecting pycryptodomex>=3.20.0
+#25 32.06   Downloading pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+#25 32.46      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 2.3/2.3 MB 5.8 MB/s eta 0:00:00
+#25 32.57 Collecting urllib3<3,>=1.26
+#25 32.65   Downloading urllib3-2.6.3-py3-none-any.whl (131 kB)
+#25 32.71      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 131.6/131.6 kB 2.5 MB/s eta 0:00:00
+#25 33.02 Collecting charset_normalizer<4,>=2
+#25 33.07   Downloading charset_normalizer-3.4.6-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (207 kB)
+#25 33.11      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 207.9/207.9 kB 4.7 MB/s eta 0:00:00
+#25 33.17 Collecting idna<4,>=2.5
+#25 33.21   Downloading idna-3.11-py3-none-any.whl (71 kB)
+#25 33.22      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 71.0/71.0 kB 16.8 MB/s eta 0:00:00
+#25 33.28 Collecting certifi>=2023.5.7
+#25 33.32   Downloading certifi-2026.2.25-py3-none-any.whl (153 kB)
+#25 33.35      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 153.7/153.7 kB 6.1 MB/s eta 0:00:00
+#25 33.50 Collecting anyio<5,>=3.6.2
+#25 33.58   Downloading anyio-4.13.0-py3-none-any.whl (114 kB)
+#25 33.61      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 114.4/114.4 kB 3.7 MB/s eta 0:00:00
+#25 34.07 Collecting wrapt<3,>=1.10
+#25 34.11   Downloading wrapt-2.1.2-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (113 kB)
+#25 34.16      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 113.6/113.6 kB 2.0 MB/s eta 0:00:00
+#25 34.69 Collecting cryptography>=39.0
+#25 34.75   Downloading cryptography-46.0.6-cp38-abi3-manylinux_2_34_x86_64.whl (4.4 MB)
+#25 35.61      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 4.4/4.4 MB 5.2 MB/s eta 0:00:00
+#25 35.70 Collecting exceptiongroup>=1.0.2
+#25 35.84   Downloading exceptiongroup-1.3.1-py3-none-any.whl (16 kB)
+#25 36.14 Collecting cffi>=2.0.0
+#25 36.19   Downloading cffi-2.0.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (216 kB)
+#25 36.24      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 216.5/216.5 kB 4.4 MB/s eta 0:00:00
+#25 36.35 Collecting pycparser
+#25 36.39   Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+#25 36.40      ΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöüΓöü 48.2/48.2 kB 9.4 MB/s eta 0:00:00
+#25 36.42 Building wheels for collected packages: pdfminer
+#25 36.42   Building wheel for pdfminer (setup.py): started
+#25 51.40   Building wheel for pdfminer (setup.py): finished with status 'done'
+#25 51.41   Created wheel for pdfminer: filename=pdfminer-20191125-py3-none-any.whl size=6140183 sha256=6c6e0831937c27167e1aeea3315bd693baf76d591b6bbedaec7d4fb1d63b77f1
+#25 51.41   Stored in directory: /tmp/pip-ephem-wheel-cache-5ort2fsi/wheels/4e/c1/68/f7bd0a8f514661f76b5cbe3b5f76e0033d79f1296012cbbf72
+#25 51.42 Successfully built pdfminer
+#25 51.65 Installing collected packages: yara-python, texttable, easygui, brotli, wrapt, urllib3, typing-extensions, python-multipart, python-magic, pyppmd, pyparsing, pymupdf, pycryptodomex, pycryptodome, pycparser, pybcj, psycopg2-binary, psutil, pillow, pefile, packaging, olefile, multivolumefile, lxml, inflate64, idna, h11, colorclass, click, charset_normalizer, certifi, backports.zstd, annotated-types, annotated-doc, uvicorn, typing-inspection, requests, python-docx, pydantic-core, py7zr, pdfminer, exceptiongroup, Deprecated, cffi, pydantic, pikepdf, cryptography, anyio, starlette, msoffcrypto-tool, fastapi, pcodedmp, oletools
+#25 55.38 Successfully installed Deprecated-1.3.1 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.13.0 backports.zstd-1.3.0 brotli-1.2.0 certifi-2026.2.25 cffi-2.0.0 charset_normalizer-3.4.6 click-8.3.1 colorclass-2.2.2 cryptography-46.0.6 easygui-0.98.3 exceptiongroup-1.3.1 fastapi-0.135.2 h11-0.16.0 idna-3.11 inflate64-1.0.4 lxml-6.0.2 msoffcrypto-tool-6.0.0 multivolumefile-0.2.3 olefile-0.47 oletools-0.60.2 packaging-26.0 pcodedmp-1.2.6 pdfminer-20191125 pefile-2024.8.26 pikepdf-10.5.1 pillow-12.1.1 psutil-7.2.2 psycopg2-binary-2.9.11 py7zr-1.1.0 pybcj-1.0.7 pycparser-3.0 pycryptodome-3.23.0 pycryptodomex-3.23.0 pydantic-2.12.5 pydantic-core-2.41.5 pymupdf-1.27.2.2 pyparsing-3.3.2 pyppmd-1.3.1 python-docx-1.2.0 python-magic-0.4.27 python-multipart-0.0.22 requests-2.33.0 starlette-1.0.0 texttable-1.7.0 typing-extensions-4.15.0 typing-inspection-0.4.2 urllib3-2.6.3 uvicorn-0.42.0 wrapt-2.1.2 yara-python-4.5.4
+#25 55.38 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+#25 DONE 61.6s
+
+#30 [attachment-scanner 6/6] COPY . .
+#30 DONE 0.4s
+
+#31 [attachment-scanner] exporting to image
+#31 exporting layers
+#31 exporting layers 5.9s done
+#31 exporting manifest sha256:bfda4547d6fc98e4256f74f7295500924aee77575a6a54649102774f96a6be30 0.0s done
+#31 exporting config sha256:ec63821a36b679b237194bf8d8c0679d269ea1fef4c6c85956a57941894425c5 0.0s done
+#31 exporting attestation manifest sha256:36818688950186c8eee5065ecf0fa0dc66ac437218fee7aceeb90ff1dd808456 0.0s done
+#31 exporting manifest list sha256:9bf894ef0b90f77dafd0ca46d3a5fa756563d6f7bd54bdd024488a97d76ab060 0.0s done
+#31 naming to docker.io/library/hack-o-hire-2-attachment-scanner:latest done
+#31 unpacking to docker.io/library/hack-o-hire-2-attachment-scanner:latest
+#31 unpacking to docker.io/library/hack-o-hire-2-attachment-scanner:latest 1.5s done
+#31 DONE 7.5s
+
+#32 [attachment-scanner] resolving provenance for metadata file
+#32 DONE 0.0s
+ Image hack-o-hire-2-attachment-scanner Built 
+ Image hack-o-hire-2-frontend-builder Built 

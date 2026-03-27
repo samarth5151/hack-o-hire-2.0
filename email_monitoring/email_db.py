@@ -72,10 +72,36 @@ CREATE TABLE IF NOT EXISTS email_attachments (
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS email_feedback (
+    id              SERIAL PRIMARY KEY,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    email_id        INT REFERENCES email_inbox(id) ON DELETE SET NULL,
+    model_verdict   TEXT,
+    correct_verdict TEXT    NOT NULL,
+    was_correct     BOOLEAN DEFAULT FALSE,
+    module          TEXT    DEFAULT 'phishing',
+    reviewer_id     TEXT    DEFAULT 'user',
+    notes           TEXT,
+    queued_retrain  BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS email_retraining (
+    id              SERIAL PRIMARY KEY,
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    email_id        INT,
+    subject         TEXT,
+    correct_verdict TEXT,
+    module          TEXT    DEFAULT 'phishing',
+    source          TEXT    DEFAULT 'human_feedback',
+    used_in_run     BOOLEAN DEFAULT FALSE
+);
+
 CREATE INDEX IF NOT EXISTS idx_email_received  ON email_inbox(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_email_sender    ON email_inbox(sender);
 CREATE INDEX IF NOT EXISTS idx_email_risk      ON email_inbox(risk_tier);
 CREATE INDEX IF NOT EXISTS idx_att_email_id    ON email_attachments(email_id);
+CREATE INDEX IF NOT EXISTS idx_efeedback_email ON email_feedback(email_id);
+CREATE INDEX IF NOT EXISTS idx_eretrain_used   ON email_retraining(used_in_run);
 """
 
 
@@ -406,6 +432,124 @@ def get_stats() -> dict:
     except Exception as e:
         print(f"[EmailDB] get_stats error: {e}")
         return {}
+    finally:
+        if conn and p:
+            p.putconn(conn)
+
+
+# ── Feedback & Retraining ─────────────────────────────────────────────────────
+
+def save_email_feedback(
+    email_id: int,
+    model_verdict: str,
+    correct_verdict: str,
+    module: str = "phishing",
+    reviewer_id: str = "user",
+    notes: str = "",
+    subject: str = "",
+) -> dict:
+    """Save analyst feedback. Queues incorrect predictions for retraining."""
+    was_correct = (model_verdict.upper() == correct_verdict.upper())
+    p = _get_pool()
+    if p is None:
+        return {"error": "Database unavailable", "was_correct": was_correct,
+                "queued_for_retraining": False}
+    conn = None
+    try:
+        conn = p.getconn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO email_feedback
+                (email_id, model_verdict, correct_verdict, was_correct,
+                 module, reviewer_id, notes, queued_retrain)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (
+                email_id, model_verdict, correct_verdict, was_correct,
+                module, reviewer_id, notes, not was_correct,
+            ))
+            if not was_correct:
+                cur.execute("""
+                    INSERT INTO email_retraining
+                    (email_id, subject, correct_verdict, module, source)
+                    VALUES (%s,%s,%s,%s,%s)
+                """, (email_id, subject, correct_verdict, module, "human_feedback"))
+        conn.commit()
+        return {
+            "email_id": email_id,
+            "was_correct": was_correct,
+            "correct_verdict": correct_verdict,
+            "queued_for_retraining": not was_correct,
+        }
+    except Exception as e:
+        print(f"[EmailDB] save_email_feedback error: {e}")
+        if conn:
+            conn.rollback()
+        return {"error": str(e), "was_correct": was_correct, "queued_for_retraining": False}
+    finally:
+        if conn and p:
+            p.putconn(conn)
+
+
+def get_feedback_stats() -> dict:
+    """Aggregate feedback statistics for the email module."""
+    p = _get_pool()
+    if p is None:
+        return {}
+    conn = None
+    try:
+        conn = p.getconn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM email_inbox")
+            total_scans = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM email_feedback")
+            total_feedback = cur.fetchone()[0]
+
+            cur.execute("""
+                SELECT SUM(CASE WHEN was_correct THEN 1 ELSE 0 END), COUNT(*)
+                FROM email_feedback
+            """)
+            row = cur.fetchone()
+            accuracy = round(row[0] / row[1] * 100, 1) if row[1] else None
+
+            cur.execute("SELECT COUNT(*) FROM email_retraining WHERE used_in_run=FALSE")
+            queue_size = cur.fetchone()[0]
+
+            cur.execute("""
+                SELECT correct_verdict, COUNT(*) FROM email_feedback
+                WHERE was_correct=FALSE GROUP BY correct_verdict
+            """)
+            errors = dict(cur.fetchall())
+
+        return {
+            "total_scans": total_scans,
+            "total_feedback": total_feedback,
+            "accuracy": accuracy,
+            "retraining_queue_size": queue_size,
+            "false_positives": errors.get("LOW", 0) + errors.get("SAFE", 0),
+            "false_negatives": errors.get("CRITICAL", 0) + errors.get("HIGH", 0),
+        }
+    except Exception as e:
+        print(f"[EmailDB] get_feedback_stats error: {e}")
+        return {}
+    finally:
+        if conn and p:
+            p.putconn(conn)
+
+
+def mark_email_retraining_used():
+    """Mark all pending retraining items as consumed."""
+    p = _get_pool()
+    if p is None:
+        return
+    conn = None
+    try:
+        conn = p.getconn()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE email_retraining SET used_in_run=TRUE WHERE used_in_run=FALSE")
+        conn.commit()
+    except Exception as e:
+        print(f"[EmailDB] mark_retraining_used error: {e}")
     finally:
         if conn and p:
             p.putconn(conn)

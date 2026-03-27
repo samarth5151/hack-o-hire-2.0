@@ -37,6 +37,10 @@ from app.ssl_checker import check_ssl
 from app.whois_checker import check_whois
 from app.html_analyzer import analyze_html
 from app.logger import logger
+from app.feedback_db import (
+    save_scan, save_feedback, get_feedback_stats,
+    get_retraining_queue, mark_retraining_used, init_db as init_feedback_db,
+)
 
 # ── Initialise Flask ───────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="dashboard", static_url_path="")
@@ -44,6 +48,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Load ML model once at startup
 predictor = Predictor()
+init_feedback_db()
 logger.info("PhishGuard Flask API ready.")
 
 
@@ -369,6 +374,12 @@ def analyze():
     try:
         result = run_full_analysis(url)
         result["analysis_time_ms"] = round((time.time() - start) * 1000, 1)
+        # Persist scan and return scan_id for feedback reference
+        try:
+            scan_id = save_scan(result)
+            result["scan_id"] = scan_id
+        except Exception as db_err:
+            logger.warning(f"Failed to save scan to DB: {db_err}")
         return jsonify(result)
     except Exception as e:
         logger.error(f"Analysis failed for {url}: {e}")
@@ -451,6 +462,124 @@ def analyze_fast():
     except Exception as e:
         logger.error(f"Fast analysis failed: {e}")
         return jsonify({"error": f"Analysis failed: {e}"}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Feedback & Retraining Endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/feedback", methods=["POST"])
+def submit_feedback():
+    """
+    Submit human feedback on a scan result.
+    Body: {
+        scan_id: int,
+        url: str,
+        model_verdict: str,       # what the model said (SAFE/SUSPICIOUS/DANGEROUS)
+        correct_verdict: str,     # what the human says is correct
+        reviewer_id: str,         # optional
+        notes: str                # optional
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    scan_id         = data.get("scan_id")
+    url             = data.get("url", "")
+    model_verdict   = data.get("model_verdict", "")
+    correct_verdict = data.get("correct_verdict", "")
+    reviewer_id     = data.get("reviewer_id", "user")
+    notes           = data.get("notes", "")
+
+    if not correct_verdict:
+        return jsonify({"error": "correct_verdict is required"}), 400
+
+    try:
+        result = save_feedback(
+            scan_id=int(scan_id) if scan_id else 0,
+            url=url,
+            model_verdict=model_verdict,
+            correct_verdict=correct_verdict,
+            reviewer_id=reviewer_id,
+            notes=notes,
+        )
+        logger.info(f"Feedback: scan={scan_id} model={model_verdict} correct={correct_verdict} queued={result['queued_for_retraining']}")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Feedback save failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/feedback/stats", methods=["GET"])
+def feedback_stats():
+    """Return aggregate feedback statistics."""
+    try:
+        return jsonify(get_feedback_stats())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/admin/retrain", methods=["POST"])
+def trigger_retraining():
+    """
+    Admin endpoint: triggers model retraining using queued human corrections.
+    """
+    try:
+        stats = get_feedback_stats()
+        queue_size = stats.get("retraining_queue_size", 0)
+
+        if queue_size == 0:
+            return jsonify({"status": "skipped", "reason": "No new corrections in queue", "queue_size": 0})
+
+        # Fetch samples for retraining log
+        samples = get_retraining_queue(limit=queue_size)
+
+        # Mark queue as consumed
+        mark_retraining_used()
+
+        # Attempt to trigger actual retraining
+        retrain_log = []
+        status = "queued"
+        try:
+            from app.model_trainer import ModelTrainer
+            trainer = ModelTrainer()
+            metrics = trainer.train()
+            retrain_log = [
+                f"Retraining completed on {queue_size} correction(s).",
+                f"New accuracy: {metrics.get('accuracy', 'N/A')}",
+                f"F1-weighted: {metrics.get('f1_weighted', 'N/A')}",
+            ]
+            status = "completed"
+        except Exception as e:
+            retrain_log = [
+                f"Retraining queued — {queue_size} sample(s) marked for training.",
+                f"Run model_trainer.py manually to apply corrections. ({e})",
+            ]
+            status = "queued"
+
+        return jsonify({
+            "status": status,
+            "queue_size": queue_size,
+            "log": retrain_log,
+            "message": f"Retraining initiated on {queue_size} correction(s).",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/admin/retrain/status", methods=["GET"])
+def retrain_status():
+    """Return retraining queue status."""
+    try:
+        stats = get_feedback_stats()
+        return jsonify({
+            "queue_size":     stats.get("retraining_queue_size", 0),
+            "total_scans":    stats.get("total_scans", 0),
+            "total_feedback": stats.get("total_feedback", 0),
+            "accuracy":       stats.get("accuracy"),
+            "false_positives": stats.get("false_positives", 0),
+            "false_negatives": stats.get("false_negatives", 0),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────

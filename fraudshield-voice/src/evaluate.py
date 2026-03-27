@@ -36,11 +36,34 @@ def get_tier(score: int):
 
 
 def load_models():
+    """
+    Load the deepfake voice detector and Random Forest models.
+    Prefers best_eer_v2.pt (updated MFCC model) and falls back to
+    best_eer.pt if v2 is unavailable.
+    """
     print("Loading models...")
     deep = DeepfakeVoiceDetector().to(DEVICE)
-    deep.load_state_dict(
-        torch.load(MODELS_DIR / "best_eer.pt", map_location=DEVICE)
-    )
+
+    v2_path  = MODELS_DIR / "best_eer_v2.pt"
+    v1_path  = MODELS_DIR / "best_eer.pt"
+
+    if v2_path.exists():
+        print(f"  Loading MFCC model from best_eer_v2.pt ...")
+        ckpt = torch.load(v2_path, map_location=DEVICE)
+        # Support both plain state_dict and full checkpoint dict formats
+        state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        deep.load_state_dict(state_dict)
+        if isinstance(ckpt, dict):
+            print(f"  checkpoint epoch={ckpt.get('epoch','?')}  best_EER={ckpt.get('best_eer', '?'):.4f}")
+    elif v1_path.exists():
+        print(f"  best_eer_v2.pt not found — falling back to best_eer.pt")
+        deep.load_state_dict(torch.load(v1_path, map_location=DEVICE))
+    else:
+        raise FileNotFoundError(
+            f"No model weights found in {MODELS_DIR}. "
+            "Expected best_eer_v2.pt or best_eer.pt."
+        )
+
     deep.eval()
     rf = load_rf()
     print("  Models loaded and ready.")

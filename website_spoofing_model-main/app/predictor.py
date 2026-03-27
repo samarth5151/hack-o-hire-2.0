@@ -105,17 +105,20 @@ class Predictor:
             if features.has_ip == 1: phish_prob += 0.3
             phish_prob = min(phish_prob, 0.98)
             X_scaled = X # Not actually scaled
+            predicted_label = "phishing" if phish_prob >= settings.suspicious_threshold / 100 else "legitimate"
         else:
             # 2. Scale features
             X_scaled = self.scaler.transform(X)
             
-            # 3. Predict probability and class
+            # 3. Predict probability and class using the trained model + label encoder
             proba = self.model.predict_proba(X_scaled)[0]
-            # Cast to list[str] to satisfy lint
+            y_pred_encoded = self.model.predict(X_scaled)[0]
+            # Use label encoder to decode predicted class to human-readable label
             import typing
             label_classes = typing.cast(typing.List[str], list(self.le.classes_))
-            phish_idx = label_classes.index("phishing")
-            phish_prob = float(proba[phish_idx])
+            predicted_label = str(self.le.inverse_transform([y_pred_encoded])[0])
+            phish_idx = label_classes.index("phishing") if "phishing" in label_classes else -1
+            phish_prob = float(proba[phish_idx]) if phish_idx >= 0 else float(proba[-1])
         
         # 3. Explainability: Identify high-risk signals
         from app.feature_extractor import URLFeatures
@@ -172,16 +175,40 @@ class Predictor:
 
         safe_factors = sorted(list(set(safe_factors)))
 
-        # 5. Determine Result Text
-        if phish_prob < settings.safe_threshold / 100:
-            status_text = "SAFE (Legitimate)"
-            label_display = "legitimate"
-        elif phish_prob < settings.suspicious_threshold / 100:
-            status_text = "SUSPICIOUS"
-            label_display = "suspicious"
+        # 5. Determine label using the label encoder decoded prediction (real model) as primary signal,
+        #    with probability-based "suspicious" band as a refinement.
+        if not self.mock_mode:
+            # Use the label encoder decoded prediction as the base label
+            if predicted_label == "phishing":
+                if phish_prob < settings.safe_threshold / 100:
+                    # Heuristic guard overrode the probability — downgrade to suspicious
+                    label_display = "suspicious"
+                    status_text = "SUSPICIOUS"
+                else:
+                    label_display = "phishing"
+                    status_text = "DANGEROUS (Phishing Attempt)"
+            else:
+                # Model predicted legitimate; use probability to check for suspicious band
+                if phish_prob >= settings.suspicious_threshold / 100:
+                    label_display = "phishing"
+                    status_text = "DANGEROUS (Phishing Attempt)"
+                elif phish_prob >= settings.safe_threshold / 100:
+                    label_display = "suspicious"
+                    status_text = "SUSPICIOUS"
+                else:
+                    label_display = "legitimate"
+                    status_text = "SAFE (Legitimate)"
         else:
-            status_text = "DANGEROUS (Phishing Attempt)"
-            label_display = "phishing"
+            # Mock mode: rely solely on probability thresholds
+            if phish_prob < settings.safe_threshold / 100:
+                status_text = "SAFE (Legitimate)"
+                label_display = "legitimate"
+            elif phish_prob < settings.suspicious_threshold / 100:
+                status_text = "SUSPICIOUS"
+                label_display = "suspicious"
+            else:
+                status_text = "DANGEROUS (Phishing Attempt)"
+                label_display = "phishing"
 
         report_lines = [
             f"The PhishGuard engine analyzed {len(feat_names)} signatures across this URL. "

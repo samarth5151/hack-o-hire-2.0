@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  RiShieldFlashLine, RiUserLine, RiArrowRightSLine, RiLogoutBoxLine,
+  RiUserLine, RiArrowRightSLine, RiLogoutBoxLine,
   RiBellLine, RiSettings3Line, RiArrowDownSLine, RiMenuLine, RiCloseLine,
   RiNotificationLine,
 } from 'react-icons/ri'
@@ -14,6 +14,7 @@ import PromptGuardChatbot from './PromptGuardChatbot'
 import AgentSandbox       from './AgentSandbox'
 import ModelAnalytics     from './admin/ModelAnalytics'
 import ModelPolicies      from './admin/ModelPolicies'
+import ModelRetraining    from './admin/ModelRetraining'
 
 const ADMIN_PAGES = {
   adminoverview:  <AdminOverview />,
@@ -22,9 +23,12 @@ const ADMIN_PAGES = {
   sandbox:        <AgentSandbox />,
   modelanalytics: <ModelAnalytics />,
   modelpolicies:  <ModelPolicies />,
+  modelretraining:<ModelRetraining />,
 }
 
-export default function AdminPortal({ onExit }) {
+console.log('[AegisAI] Loading AdminPortal module...');
+
+function AdminPortal({ onExit }) {
   const [activePage, setActivePage] = useState('adminoverview')
   const [collapsed, setCollapsed]   = useState(false)
   const meta = PAGE_META[activePage] ?? { title: '', sub: '' }
@@ -39,14 +43,14 @@ export default function AdminPortal({ onExit }) {
         className="fixed top-0 left-0 bottom-0 bg-white flex flex-col z-50 border-r border-slate-100 overflow-hidden"
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-100 min-h-[64px]">
-          <div className="w-8 h-8 rounded-xl bg-sky-500 flex items-center justify-center flex-shrink-0">
-            <RiShieldFlashLine className="text-white text-base" />
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-100 min-h-[64px] bg-gradient-to-r from-sky-50/60 to-white">
+          <div className="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 shadow-sm ring-1 ring-sky-100">
+            <img src="/logo.jpeg" alt="FraudShield AI" className="w-full h-full object-cover" />
           </div>
           {!collapsed && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 min-w-0">
-              <p className="font-bold text-[14px] tracking-tight text-gray-900">AegisAI</p>
-              <p className="text-[10px] font-semibold text-sky-500 uppercase tracking-wide">Admin Console</p>
+              <p className="font-bold text-[13px] tracking-tight text-gray-900 leading-tight">FraudShield AI</p>
+              <p className="text-[9px] font-semibold text-sky-500 uppercase tracking-wider">Admin Console</p>
             </motion.div>
           )}
           <button
@@ -195,3 +199,5 @@ export default function AdminPortal({ onExit }) {
     </div>
   )
 }
+
+export default AdminPortal;

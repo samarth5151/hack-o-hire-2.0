@@ -5,7 +5,7 @@ import {
   RiCheckboxCircleLine, RiLoader4Line, RiLockLine, RiGlobalLine,
   RiFileTextLine, RiCodeLine, RiShieldLine, RiRobot2Line,
   RiDownloadLine, RiRefreshLine, RiInformationLine, RiArrowDownSLine,
-  RiArrowUpSLine, RiCalendarLine,
+  RiArrowUpSLine, RiCalendarLine, RiMessage2Line, RiCheckLine, RiCloseLine,
 } from 'react-icons/ri'
 import { PageWrapper } from '../components/ui'
 
@@ -315,6 +315,178 @@ function XAIExplanation({ summary, mlPct, mlLabel, mlIsPhish, xaiOpen, setXaiOpe
 }
 
 
+// ── Feedback Section ───────────────────────────────────────────────────────────
+function FeedbackSection({ scanId, url, modelVerdict }) {
+  const [step,      setStep]      = useState('ask')   // 'ask' | 'correct' | 'wrong' | 'done' | 'saving'
+  const [verdict,   setVerdict]   = useState(modelVerdict)
+  const [notes,     setNotes]     = useState('')
+  const [error,     setError]     = useState(null)
+
+  const submit = async (correctVerdict) => {
+    setStep('saving')
+    setError(null)
+    try {
+      const res = await fetch('/api/website-spoofing/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scan_id:         scanId,
+          url:             url,
+          model_verdict:   modelVerdict,
+          correct_verdict: correctVerdict,
+          reviewer_id:     'user',
+          notes:           notes,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setStep('done')
+        setVerdict(correctVerdict)
+        return data
+      } else {
+        setError('Feedback submission failed. Please try again.')
+        setStep('wrong')
+      }
+    } catch (e) {
+      setError('Could not reach the server. Feedback not saved.')
+      setStep('wrong')
+    }
+  }
+
+  const VERDICTS = ['SAFE', 'SUSPICIOUS', 'DANGEROUS']
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.6 }}
+      className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden mb-4"
+    >
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-50 bg-slate-50/60">
+        <div className="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
+          <RiMessage2Line className="text-sky-500 text-[17px]" />
+        </div>
+        <div>
+          <p className="text-[13px] font-bold text-slate-800">Was this result correct?</p>
+          <p className="text-[11px] text-slate-400">Your feedback trains the model to improve future detections</p>
+        </div>
+      </div>
+
+      <div className="px-5 py-4">
+        <AnimatePresence mode="wait">
+
+          {/* Step: ask */}
+          {step === 'ask' && (
+            <motion.div key="ask" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex items-center gap-3"
+            >
+              <p className="text-[13px] text-slate-600 flex-1">
+                Model verdict: <span className={`font-bold ${modelVerdict === 'DANGEROUS' ? 'text-red-600' : modelVerdict === 'SUSPICIOUS' ? 'text-amber-600' : 'text-emerald-600'}`}>{modelVerdict}</span>
+              </p>
+              <button
+                onClick={() => submit(modelVerdict)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[12px] font-semibold hover:bg-emerald-100 transition-all"
+              >
+                <RiCheckLine /> Yes, correct
+              </button>
+              <button
+                onClick={() => setStep('wrong')}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[12px] font-semibold hover:bg-red-100 transition-all"
+              >
+                <RiCloseLine /> No, it's wrong
+              </button>
+            </motion.div>
+          )}
+
+          {/* Step: wrong — select correct verdict */}
+          {step === 'wrong' && (
+            <motion.div key="wrong" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="space-y-4"
+            >
+              <p className="text-[12px] text-slate-600 font-medium">What is the correct verdict for this URL?</p>
+              <div className="flex gap-2">
+                {VERDICTS.map(v => (
+                  <button
+                    key={v}
+                    onClick={() => setVerdict(v)}
+                    className={`flex-1 py-2.5 rounded-xl text-[12px] font-semibold border-2 transition-all ${
+                      verdict === v
+                        ? v === 'DANGEROUS' ? 'border-red-400 bg-red-50 text-red-700'
+                          : v === 'SUSPICIOUS' ? 'border-amber-400 bg-amber-50 text-amber-700'
+                          : 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                        : 'border-slate-100 text-slate-400 hover:border-slate-200'
+                    }`}
+                  >
+                    {v === 'DANGEROUS' ? '🚨 Dangerous' : v === 'SUSPICIOUS' ? '⚠️ Suspicious' : '✅ Safe'}
+                  </button>
+                ))}
+              </div>
+              <div>
+                <label className="text-[12px] font-semibold text-slate-500 mb-1.5 block">Notes (optional)</label>
+                <textarea
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Why is the model wrong? Any observations about this URL..."
+                  className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-[12px] text-slate-700 placeholder-slate-300 outline-none focus:border-sky-400 resize-none h-16 font-medium"
+                />
+              </div>
+              {error && (
+                <p className="text-[11px] text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setStep('ask')}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-[12px] font-semibold hover:border-slate-300 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => submit(verdict)}
+                  disabled={!verdict}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-[12px] font-bold hover:bg-blue-700 disabled:opacity-40 transition-all shadow-sm"
+                >
+                  Submit Correction → Add to Retraining Queue
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Step: saving */}
+          {step === 'saving' && (
+            <motion.div key="saving" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex items-center gap-3 py-2"
+            >
+              <RiLoader4Line className="animate-spin text-sky-500 text-[18px]" />
+              <span className="text-[13px] text-slate-500">Saving feedback…</span>
+            </motion.div>
+          )}
+
+          {/* Step: done */}
+          {step === 'done' && (
+            <motion.div key="done" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+              className="flex items-center gap-3 py-2"
+            >
+              <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center">
+                <RiCheckLine className="text-emerald-500 text-[16px]" />
+              </div>
+              <div>
+                <p className="text-[13px] font-semibold text-slate-800">Thank you for the feedback!</p>
+                <p className="text-[11px] text-slate-400">
+                  {verdict !== modelVerdict
+                    ? `Correction (${modelVerdict} → ${verdict}) added to retraining queue ✓`
+                    : 'Model prediction confirmed as correct ✓'}
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  )
+}
+
+
 export default function WebsiteSpoofing() {
   const [url,          setUrl         ] = useState('')
   const [isAnalyzing,  setIsAnalyzing ] = useState(false)
@@ -322,6 +494,7 @@ export default function WebsiteSpoofing() {
   const [data,         setData        ] = useState(null)
   const [error,        setError       ] = useState(null)
   const [xaiOpen,      setXaiOpen     ] = useState(false)
+  const [scanId,       setScanId      ] = useState(null)
 
   // Animate scan steps
   const runStepAnimation = () => {
@@ -342,6 +515,7 @@ export default function WebsiteSpoofing() {
     setIsAnalyzing(true)
     setError(null)
     setData(null)
+    setScanId(null)
     setXaiOpen(false)
     const timer = runStepAnimation()
     try {
@@ -352,7 +526,9 @@ export default function WebsiteSpoofing() {
       })
       clearInterval(timer)
       if (!res.ok) throw new Error((await res.json()).detail || 'Analysis failed')
-      setData(await res.json())
+      const result = await res.json()
+      setData(result)
+      if (result.scan_id) setScanId(result.scan_id)
     } catch (e) {
       setError(e.message || 'Cannot reach the spoofing detector service.')
     } finally {
@@ -360,7 +536,7 @@ export default function WebsiteSpoofing() {
     }
   }
 
-  const handleReset = () => { setData(null); setError(null); setUrl('') }
+  const handleReset = () => { setData(null); setError(null); setUrl(''); setScanId(null) }
 
   const handleExport = () => window.print()
 
@@ -753,6 +929,13 @@ export default function WebsiteSpoofing() {
               </DetailCard>
 
             </div>{/* end cards grid */}
+
+            {/* ── Feedback Section ── */}
+            <FeedbackSection
+              scanId={scanId}
+              url={data.url || url}
+              modelVerdict={verdict}
+            />
 
             {/* ── Action Row ── */}
             <motion.div

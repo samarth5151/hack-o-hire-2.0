@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { RiShieldFlashLine, RiUserLine, RiArrowRightSLine, RiMenuLine, RiCloseLine } from 'react-icons/ri'
+import { RiUserLine, RiArrowRightSLine, RiMenuLine, RiCloseLine } from 'react-icons/ri'
 import { NAV_ITEMS } from '../../constants/navigation.jsx'
 
 export default function Sidebar({ activePage, setActivePage }) {
@@ -13,12 +13,12 @@ export default function Sidebar({ activePage, setActivePage }) {
         initial={false}
         animate={{ width: collapsed ? 64 : 240 }}
         transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-        className="fixed top-0 left-0 bottom-0 bg-white flex flex-col z-50 border-r border-slate-100 overflow-hidden"
+        className="fixed top-0 left-0 bottom-0 bg-white flex flex-col z-50 border-r border-slate-100 overflow-hidden shadow-[1px_0_0_0_#f1f5f9]"
       >
         {/* Logo + Collapse toggle */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-100 min-h-[64px]">
-          <div className="w-8 h-8 rounded-xl bg-sky-500 flex items-center justify-center flex-shrink-0">
-            <RiShieldFlashLine className="text-white text-base" />
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-100 min-h-[64px] bg-gradient-to-r from-sky-50/60 to-white">
+          <div className="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 shadow-sm ring-1 ring-sky-100">
+            <img src="/logo.jpeg" alt="FraudShield AI" className="w-full h-full object-cover" />
           </div>
           {!collapsed && (
             <motion.div
@@ -28,8 +28,8 @@ export default function Sidebar({ activePage, setActivePage }) {
               transition={{ duration: 0.2 }}
               className="flex-1 min-w-0"
             >
-              <p className="font-bold text-[14px] tracking-tight text-gray-900">AegisAI</p>
-              <p className="text-[10px] font-semibold text-sky-500 uppercase tracking-wide">Threat Detection</p>
+              <p className="font-bold text-[13px] tracking-tight text-gray-900 leading-tight">FraudShield AI</p>
+              <p className="text-[9px] font-semibold text-sky-500 uppercase tracking-wider">Security Platform</p>
             </motion.div>
           )}
           <button
@@ -79,7 +79,7 @@ export default function Sidebar({ activePage, setActivePage }) {
         {!collapsed && (
           <div className="p-3 border-t border-slate-100">
             <div className="flex items-center gap-2.5 p-2.5 rounded-xl cursor-pointer hover:bg-sky-50 transition-colors group">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center flex-shrink-0 shadow-sm">
                 <span className="text-white text-[11px] font-bold">AK</span>
               </div>
               <div className="flex-1 min-w-0">
@@ -92,7 +92,7 @@ export default function Sidebar({ activePage, setActivePage }) {
         )}
         {collapsed && (
           <div className="p-2 border-t border-slate-100 flex justify-center">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center shadow-sm">
               <span className="text-white text-[11px] font-bold">AK</span>
             </div>
           </div>

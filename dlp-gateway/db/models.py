@@ -84,6 +84,24 @@ class UserRiskProfile(Base):
     first_seen           = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class DLPPolicy(Base):
+    """Admin-managed named DLP rules stored in the database."""
+    __tablename__ = "dlp_policies"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    name        = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    engine_type = Column(String(64), nullable=False, default="Regex")  # Regex | NER | BERT | Entropy | YARA
+    action      = Column(String(16), nullable=False, default="Block")  # Block | Redact | Alert | Warn
+    is_active   = Column(Boolean, nullable=False, default=True)
+    # JSON arrays: list of department names this rule applies to (empty = all)
+    departments = Column(JSON, nullable=False, default=list)
+    # JSON array: list of detection category keys that trigger this rule
+    patterns    = Column(JSON, nullable=False, default=list)
+    created_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at  = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Alert(Base):
     """High-risk events flagged for admin review."""
     __tablename__ = "alerts"

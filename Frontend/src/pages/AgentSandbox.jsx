@@ -5,11 +5,13 @@ import {
   RiAlertLine, RiLockLine, RiServerLine, RiFolder3Line,
   RiGlobalLine, RiUpload2Line, RiRefreshLine,
   RiCheckLine, RiTimeLine, RiCloseCircleLine, RiFlashlightLine,
-  RiDeleteBinLine, RiCpuLine, RiInformationLine,
+  RiDeleteBinLine, RiCpuLine, RiInformationLine, RiFileLine,
+  RiTableLine,
 } from 'react-icons/ri'
 import {
   Card, Btn, RiskBadge, PageWrapper, PageHeader, SectionHeader, SubTabs,
 } from '../components/ui'
+import { downloadPDFReport, downloadCSV } from '../utils/reportExport'
 
 const SBX_API = '/api/sandbox'
 
@@ -434,7 +436,10 @@ export default function AgentSandbox() {
   }
 
   // ── Download report ──────────────────────────────────────────────────────────
-  const [downloading, setDownloading] = useState(false)
+  const [downloading, setDownloading]     = useState(false)
+  const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [generatingCsv, setGeneratingCsv] = useState(false)
+
   const downloadReport = async (scanId) => {
     setDownloading(true)
     try {
@@ -457,6 +462,24 @@ export default function AgentSandbox() {
       setTimeout(() => URL.revokeObjectURL(url), 5000)
     } catch (e) { alert('Report download failed: ' + e.message) }
     finally { setDownloading(false) }
+  }
+
+  const handleDownloadPDF = async (result) => {
+    setGeneratingPdf(true)
+    try {
+      await new Promise(r => setTimeout(r, 60)) // allow UI to update
+      downloadPDFReport(result)
+    } catch (e) { alert('PDF generation failed: ' + e.message) }
+    finally { setGeneratingPdf(false) }
+  }
+
+  const handleDownloadCSV = async (result) => {
+    setGeneratingCsv(true)
+    try {
+      await new Promise(r => setTimeout(r, 40))
+      downloadCSV(result)
+    } catch (e) { alert('CSV export failed: ' + e.message) }
+    finally { setGeneratingCsv(false) }
   }
 
   const activeDims = getActiveDims()
@@ -838,16 +861,88 @@ export default function AgentSandbox() {
                         </div>
                       )}
 
-                      {/* ── Download report ── */}
-                      <button
-                        onClick={() => downloadReport(scanResult.scan_id)}
-                        disabled={downloading}
-                        className="w-full py-4 border-2 border-emerald-400 rounded-xl text-emerald-600 font-bold text-[14px] hover:bg-emerald-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2">
-                        {downloading
-                          ? <><RiRefreshLine className="animate-spin text-lg" /> Preparing report…</>
-                          : <><RiDownloadLine className="text-lg" /> Download Full HTML Report</>
-                        }
-                      </button>
+                      {/* ── Export panel ── */}
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        {/* Header */}
+                        <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                          <RiDownloadLine className="text-slate-400 text-sm" />
+                          <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Export Report</span>
+                        </div>
+
+                        {/* Main download buttons */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+                          {/* PDF Report */}
+                          <button
+                            onClick={() => handleDownloadPDF(scanResult)}
+                            disabled={generatingPdf}
+                            className="flex items-center gap-3 px-4 py-3.5 rounded-xl border-2 border-sky-400 bg-sky-50/60 hover:bg-sky-100 disabled:opacity-60 disabled:cursor-not-allowed transition-all group"
+                          >
+                            <div className="w-9 h-9 rounded-lg bg-sky-500 flex items-center justify-center flex-shrink-0 group-hover:bg-sky-600 transition-colors">
+                              {generatingPdf
+                                ? <RiRefreshLine className="text-white text-base animate-spin" />
+                                : <RiFileLine className="text-white text-base" />
+                              }
+                            </div>
+                            <div className="text-left flex-1 min-w-0">
+                              <p className="text-[13px] font-bold text-sky-700">
+                                {generatingPdf ? 'Generating…' : 'Download PDF Report'}
+                              </p>
+                              <p className="text-[10px] text-sky-500 font-mono">
+                                Full 10-section assessment · All findings
+                              </p>
+                            </div>
+                          </button>
+
+                          {/* CSV Retraining */}
+                          <button
+                            onClick={() => handleDownloadCSV(scanResult)}
+                            disabled={generatingCsv}
+                            className="flex items-center gap-3 px-4 py-3.5 rounded-xl border-2 border-emerald-400 bg-emerald-50/60 hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed transition-all group"
+                          >
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500 flex items-center justify-center flex-shrink-0 group-hover:bg-emerald-600 transition-colors">
+                              {generatingCsv
+                                ? <RiRefreshLine className="text-white text-base animate-spin" />
+                                : <RiTableLine className="text-white text-base" />
+                              }
+                            </div>
+                            <div className="text-left flex-1 min-w-0">
+                              <p className="text-[13px] font-bold text-emerald-700">
+                                {generatingCsv ? 'Exporting…' : 'Download CSV (Retraining)'}
+                              </p>
+                              <p className="text-[10px] text-emerald-600 font-mono">
+                                Failed tests only · ML fine-tuning ready
+                              </p>
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* Info strip */}
+                        <div className="flex items-start gap-2.5 px-4 py-2.5 bg-slate-50 border-t border-slate-200">
+                          <RiInformationLine className="text-slate-400 text-sm flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-[10px] text-slate-500 leading-relaxed">
+                              <strong className="text-slate-600">PDF</strong> — Professional 10-section vulnerability report: Cover Page, Executive Summary, Metrics Dashboard, Dimension Analysis, Detailed Findings, Successful Cases, Attack Patterns, Recommendations, Final Verdict &amp; Appendix.
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
+                              <strong className="text-slate-600">CSV</strong> — Contains only failed test cases with columns: <span className="font-mono">test_id, category, severity, prompt, model_response, expected_behavior, failure_reason</span>. Ready for RLHF / DPO fine-tuning pipeline.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* HTML fallback */}
+                        <div className="px-4 pb-3 pt-1">
+                          <button
+                            onClick={() => downloadReport(scanResult.scan_id)}
+                            disabled={downloading}
+                            className="w-full py-2 text-[11px] font-semibold text-slate-400 hover:text-slate-600 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60"
+                          >
+                            {downloading
+                              ? <><RiRefreshLine className="animate-spin" /> Preparing…</>
+                              : <><RiDownloadLine /> Download HTML Report (legacy)</>
+                            }
+                          </button>
+                        </div>
+                      </div>
                     </motion.div>
                   )
                 })()}
@@ -966,9 +1061,42 @@ export default function AgentSandbox() {
                         {rating}
                       </span>
                       {has_report && (
-                        <span className="flex items-center gap-1 text-[10px] text-slate-400 font-semibold">
-                          <RiDownloadLine /> Report
-                        </span>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={e => { e.stopPropagation(); downloadReport(scan_id) }}
+                            title="Download HTML report"
+                            className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-sky-600 font-semibold transition-colors px-2 py-1 rounded-lg hover:bg-sky-50"
+                          >
+                            <RiDownloadLine /> HTML
+                          </button>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              // Fetch full result then generate PDF
+                              fetch(`${SBX_API}/scan/${scan_id}/status`)
+                                .then(r => r.json())
+                                .then(d => { if (d.result) handleDownloadPDF(d.result) })
+                                .catch(() => alert('Could not load scan data for PDF.'))
+                            }}
+                            title="Download PDF report"
+                            className="flex items-center gap-1 text-[10px] text-sky-600 hover:text-sky-700 font-semibold transition-colors px-2 py-1 rounded-lg hover:bg-sky-50 border border-sky-200"
+                          >
+                            <RiFileLine /> PDF
+                          </button>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              fetch(`${SBX_API}/scan/${scan_id}/status`)
+                                .then(r => r.json())
+                                .then(d => { if (d.result) handleDownloadCSV(d.result) })
+                                .catch(() => alert('Could not load scan data for CSV.'))
+                            }}
+                            title="Download CSV for retraining"
+                            className="flex items-center gap-1 text-[10px] text-emerald-600 hover:text-emerald-700 font-semibold transition-colors px-2 py-1 rounded-lg hover:bg-emerald-50 border border-emerald-200"
+                          >
+                            <RiTableLine /> CSV
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
