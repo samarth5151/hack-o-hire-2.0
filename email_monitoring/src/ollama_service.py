@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import re
 
-_OLLAMA_MODEL = "qwen3:8b"
-_OLLAMA_URL   = "http://localhost:11434"
+import os as _os
+
+_OLLAMA_MODEL = "llama3"
+_OLLAMA_URL   = _os.environ.get("OLLAMA_HOST", _os.environ.get("OLLAMA_URL", "http://localhost:11434"))
 
 # ── Prompt template ────────────────────────────────────────────────────────────
 _PROMPT = """You are an expert email security analyst. Analyze the following email and return ONLY a valid JSON object (no markdown, no explanation).
@@ -89,7 +91,7 @@ def analyze_email_content(sender: str, subject: str, body: str) -> dict:
             "intent":            "",
             "urgency_level":     "UNKNOWN",
             "urgency_score":     0,
-            "summary":           "Ollama analysis unavailable — ensure Ollama is running at localhost:11434",
+            "summary":           "Ollama analysis unavailable — ensure Ollama is running with llama3 model",
             "suspicious_phrases": [],
             "extracted_entities": {"emails": [], "accounts": [], "phones": [], "names": []},
             "flags":             [],

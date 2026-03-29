@@ -2,9 +2,14 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies (needed for yara and other analyzers)
+# Install system dependencies:
+#   libmagic1  — python-magic file type detection
+#   libzbar0   — pyzbar QR code decoding (image analyzer)
+#   zlib1g     — zlib compression support
 RUN apt-get update && apt-get install -y \
     libmagic1 \
+    libzbar0 \
+    zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

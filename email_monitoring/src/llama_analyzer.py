@@ -1,6 +1,6 @@
 # src/llama_analyzer.py
 """
-Llama-based email analysis using llama:latest via Ollama.
+Llama-based email analysis using llama3:latest via Ollama.
 
 Functions:
   get_roberta_score()         → ML-style phishing score from LLM reasoning
@@ -13,12 +13,14 @@ import json
 import re
 from typing import Dict, Any
 
-_OLLAMA_MODEL = "llama:latest"
-_OLLAMA_URL   = "http://localhost:11434"
+import os as _os
+
+_OLLAMA_MODEL = "llama3"
+_OLLAMA_URL   = _os.environ.get("OLLAMA_HOST", _os.environ.get("OLLAMA_URL", "http://localhost:11434"))
 
 
 def _call_llama(prompt: str, temperature: float = 0.1, max_tokens: int = 1024) -> str:
-    """Call llama:latest and return raw response text."""
+    """Call llama3:latest and return raw response text."""
     try:
         import ollama
         resp = ollama.chat(
@@ -31,7 +33,7 @@ def _call_llama(prompt: str, temperature: float = 0.1, max_tokens: int = 1024) -
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         return raw
     except Exception as exc:
-        raise RuntimeError(f"Ollama llama:latest unavailable: {exc}") from exc
+        raise RuntimeError(f"Ollama llama3:latest unavailable: {exc}") from exc
 
 
 def _parse_json(raw: str) -> Dict:
@@ -133,7 +135,7 @@ Return ONLY this JSON (no extra text):
 
 def get_roberta_score(body: str, subject: str = "", sender: str = "") -> Dict[str, Any]:
     """
-    Get ML-style phishing score from llama:latest (mimicking RoBERTa).
+    Get ML-style phishing score from llama3:latest (mimicking RoBERTa).
     Returns dict with phishing_probability, label, confidence, key_features, reasoning.
     """
     try:
@@ -151,7 +153,7 @@ def get_roberta_score(body: str, subject: str = "", sender: str = "") -> Dict[st
             "key_features":  data.get("key_features", []),
             "reasoning":     data.get("reasoning", ""),
             "top_category":  data.get("top_category", "Legitimate"),
-            "model":         "llama:latest (RoBERTa-style)",
+            "model":         "llama3:latest (RoBERTa-style)",
             "available":     True,
         }
     except Exception as exc:
@@ -162,7 +164,7 @@ def get_roberta_score(body: str, subject: str = "", sender: str = "") -> Dict[st
             "key_features": [],
             "reasoning":    "",
             "top_category": "Unknown",
-            "model":        "llama:latest",
+            "model":        "llama3:latest",
             "available":    False,
             "error":        str(exc),
         }
@@ -170,7 +172,7 @@ def get_roberta_score(body: str, subject: str = "", sender: str = "") -> Dict[st
 
 def get_ai_text_probability(body: str) -> Dict[str, Any]:
     """
-    Detect if email was AI-generated using llama:latest.
+    Detect if email was AI-generated using llama3:latest.
     Returns dict with ai_probability, verdict, ai_indicators, analysis.
     """
     try:
@@ -186,7 +188,7 @@ def get_ai_text_probability(body: str) -> Dict[str, Any]:
             "ai_indicators":   data.get("ai_indicators", []),
             "human_indicators":data.get("human_indicators", []),
             "analysis":        data.get("analysis", ""),
-            "model":           "llama:latest",
+            "model":           "llama3:latest",
             "available":       True,
         }
     except Exception as exc:
@@ -198,7 +200,7 @@ def get_ai_text_probability(body: str) -> Dict[str, Any]:
             "ai_indicators":   [],
             "human_indicators":[],
             "analysis":        "",
-            "model":           "llama:latest",
+            "model":           "llama3:latest",
             "available":       False,
             "error":           str(exc),
         }
@@ -206,7 +208,7 @@ def get_ai_text_probability(body: str) -> Dict[str, Any]:
 
 def get_threat_analysis(body: str, subject: str = "", sender: str = "") -> Dict[str, Any]:
     """
-    Extract specific threats from email using llama:latest.
+    Extract specific threats from email using llama3:latest.
     Returns dict with threat_type, specific_threats, social engineering tactics, summary.
     """
     try:
@@ -227,7 +229,7 @@ def get_threat_analysis(body: str, subject: str = "", sender: str = "") -> Dict[
             "call_to_action":           data.get("call_to_action", ""),
             "summary":                  data.get("summary", ""),
             "risk_score":               int(data.get("risk_score", 0)),
-            "model":                    "llama:latest",
+            "model":                    "llama3:latest",
             "available":                True,
         }
     except Exception as exc:
@@ -241,7 +243,7 @@ def get_threat_analysis(body: str, subject: str = "", sender: str = "") -> Dict[
             "call_to_action":           "",
             "summary":                  "LLM threat analysis unavailable.",
             "risk_score":               0,
-            "model":                    "llama:latest",
+            "model":                    "llama3:latest",
             "available":                False,
             "error":                    str(exc),
         }
@@ -249,7 +251,7 @@ def get_threat_analysis(body: str, subject: str = "", sender: str = "") -> Dict[
 
 def analyze_content_for_phishing(content: str, filename: str = "document") -> Dict[str, Any]:
     """
-    Deep content analysis for attachment files using llama:latest.
+    Deep content analysis for attachment files using llama3:latest.
     Extracts credentials, links, phishing indicators.
     """
     try:
@@ -267,7 +269,7 @@ def analyze_content_for_phishing(content: str, filename: str = "document") -> Di
             "sensitive_data":    data.get("sensitive_data", []),
             "threats_detected":  data.get("threats_detected", []),
             "summary":           data.get("summary", ""),
-            "model":             "llama:latest",
+            "model":             "llama3:latest",
             "available":         True,
         }
     except Exception as exc:
@@ -279,7 +281,7 @@ def analyze_content_for_phishing(content: str, filename: str = "document") -> Di
             "sensitive_data":    [],
             "threats_detected":  [],
             "summary":           "Deep content analysis unavailable.",
-            "model":             "llama:latest",
+            "model":             "llama3:latest",
             "available":         False,
             "error":             str(exc),
         }

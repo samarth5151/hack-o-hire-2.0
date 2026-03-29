@@ -30,6 +30,7 @@ from email_db import (
     update_email_analysis, update_attachment_analysis,
     mark_read, toggle_flag, get_stats,
     save_email_feedback, get_feedback_stats, mark_email_retraining_used,
+    save_email,
 )
 from imap_worker import start_worker
 
@@ -46,8 +47,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_db()
-    start_worker()
-    print("[EmailAPI] Ready — IMAP worker started")
+    # start_worker() # Disabled: we now rely completely on direct SMTP proxy pushes
+    print("[EmailAPI] Ready — IMAP worker disabled (relying on direct SMTP integration)")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -123,11 +124,11 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
 
     Runs in parallel:
       1. DistilBERT score     — fine-tuned BERT phishing classifier (bert_phishing)
-      2. RoBERTa / ML score   — llama:latest mimicking ML model reasoning
+      2. RoBERTa / ML score   — llama3:latest mimicking ML model reasoning
       3. Rule-based check     — 15+ deterministic phishing rules with weights
-      4. AI-text probability  — llama:latest AI-generated content detection
+      4. AI-text probability  — llama3:latest AI-generated content detection
       5. Header analysis      — SPF/DKIM/DMARC + From/Reply-To mismatches
-      6. LLM threat analysis  — llama:latest specific threat extraction
+      6. LLM threat analysis  — llama3:latest specific threat extraction
       7. Credential leakage   — regex + NER sensitive data extraction
 
     Returns all scores + overall composite score.
@@ -181,7 +182,7 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
             return get_roberta_score(body, subject, sender)
         except Exception as exc:
             return {"score": 0, "label": "unknown", "confidence": 0,
-                    "key_features": [], "reasoning": "", "model": "llama:latest",
+                    "key_features": [], "reasoning": "", "model": "llama3:latest",
                     "available": False, "error": str(exc)}
 
     # ── 3. Rule-based check ─────────────────────────────────────────────────
@@ -206,7 +207,7 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
             return get_ai_text_probability(body)
         except Exception as exc:
             return {"score": 0, "probability": 0.0, "verdict": "unknown",
-                    "ai_indicators": [], "model": "llama:latest",
+                    "ai_indicators": [], "model": "llama3:latest",
                     "available": False, "error": str(exc)}
 
     # ── 5. Header analysis ──────────────────────────────────────────────────
@@ -302,7 +303,7 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
         except Exception as exc:
             return {"threat_type": "UNKNOWN", "urgency_level": "LOW",
                     "specific_threats": [], "social_engineering_tactics": [],
-                    "summary": "", "risk_score": 0, "model": "llama:latest",
+                    "summary": "", "risk_score": 0, "model": "llama3:latest",
                     "available": False, "error": str(exc)}
 
     # ── 7. Credential leakage ───────────────────────────────────────────────
@@ -619,7 +620,15 @@ def analyze_email_endpoint(email_id: int, background_tasks: BackgroundTasks):
 
 
 def _run_full_analysis(row: dict) -> dict:
-    """Run all analysis modules and return combined result dict."""
+    """Run all analysis modules and return combined result dict.
+
+    NOTE: Ollama-heavy modules (AI-text detection, LLM threat analysis) are
+    intentionally omitted here — the frontend populates those panels from the
+    faster /analyze/phishing endpoint (phishingScores state) to avoid queueing
+    multiple sequential Ollama calls that would exceed the nginx proxy timeout.
+    This endpoint focuses on: ML phishing score, credential scan, URL scan,
+    rule-based checks, and voice analysis.
+    """
     t0 = time.time()
 
     subject  = row.get("subject", "") or ""
@@ -654,16 +663,7 @@ def _run_full_analysis(row: dict) -> dict:
             "top_indicators": [], "error": str(e)
         }
 
-    # ── 2. AI-generated text detection ───────────────────────────────────────
-    try:
-        sys.path.insert(0, str(_HERE / "src"))
-        from ai_text_detector import detect_ai_text
-        ai = detect_ai_text(body[:2000])
-        result["ai_detection"] = ai
-    except Exception as e:
-        result["ai_detection"] = _fallback_ai_detect(body)
-
-    # ── 3. Credential scanner ─────────────────────────────────────────────────
+    # ── 2. Credential scanner ─────────────────────────────────────────────────
     try:
         _add_cred_scanner_path()
         cred_mod = _get_cred_mod()
@@ -675,22 +675,25 @@ def _run_full_analysis(row: dict) -> dict:
     except Exception as e:
         result["credentials"] = {"total_findings": 0, "findings": [], "error": str(e)}
 
-    # ── 4. URL / web-spoofing scan ────────────────────────────────────────────
+    # ── 3. URL / web-spoofing scan ────────────────────────────────────────────
     url_results = []
     if urls:
         try:
             from url_scanner import fast_scan
-            for url in urls[:10]:   # limit to 10 per email
+            for url in urls[:10]:
                 try:
                     res = fast_scan(url)
                     url_results.append(res)
-                except Exception:
-                    url_results.append({"url": url, "verdict": "ERROR", "risk_score_pct": 0})
+                except Exception as url_err:
+                    import logging
+                    logging.warning(f"URL scan failed for {url}: {url_err}")
+                    url_results.append({"url": url, "verdict": "ERROR", "risk_score_pct": 0,
+                                        "risk_reasons": [str(url_err)]})
         except Exception as e:
             url_results = [{"url": u, "verdict": "SKIPPED", "error": str(e)} for u in urls[:10]]
     result["url_scan"] = url_results
 
-    # ── 5. Rule-based check ───────────────────────────────────────────────────
+    # ── 4. Rule-based check ───────────────────────────────────────────────────
     try:
         from attachment_analyzer import rule_based_fraud_check
         rule = rule_based_fraud_check(body, sender)
@@ -698,27 +701,8 @@ def _run_full_analysis(row: dict) -> dict:
     except Exception as e:
         result["rule_check"] = {"is_suspicious": False, "score": 0, "reasons": []}
 
-    # ── 6. Ollama LLM content analysis ────────────────────────────────────────
+    # ── 5. Voice deepfake detection (audio attachments) ───────────────────────
     try:
-        sys.path.insert(0, str(_HERE / "src"))
-        from ollama_service import analyze_email_content
-        llm = analyze_email_content(sender, subject, body)
-        result["llm_analysis"] = llm
-    except Exception as e:
-        result["llm_analysis"] = {
-            "ollama_available": False,
-            "error": str(e),
-            "threat_type": "UNKNOWN",
-            "summary": "",
-            "flags": [],
-            "overall_risk_score": 0,
-            "recommendation": "REVIEW",
-            "extracted_entities": {"emails": [], "accounts": [], "phones": [], "names": []},
-        }
-
-    # ── 7. Voice deepfake detection (audio attachments) ───────────────────────
-    try:
-        # Fetch attachments from DB to check for audio files
         from email_db import get_email as _get_email_row
         email_row = _get_email_row(row.get("id", 0)) or {}
         raw_atts = email_row.get("attachments") or []
@@ -737,7 +721,6 @@ def _run_full_analysis(row: dict) -> dict:
             fname = att.get("filename", "")
             ext   = _Path(fname).suffix.lower()
             if ext in AUDIO_EXTENSIONS:
-                # Retrieve content from DB
                 try:
                     from email_db import get_attachment_content
                     att_data = get_attachment_content(att.get("id", -1))
@@ -764,14 +747,12 @@ def _run_full_analysis(row: dict) -> dict:
     ph_score   = result["phishing"].get("risk_score", 0)
     url_max    = max((u.get("risk_score_pct", u.get("risk_score", 0) * 100) for u in url_results), default=0)
     cred_hits  = result["credentials"].get("total_findings", 0)
-    llm_score  = result["llm_analysis"].get("overall_risk_score", 0)
     voice_max  = max((v.get("risk_score", 0) for v in result["voice_analysis"].get("results", [])), default=0)
 
     overall = int(
-        ph_score  * 0.35 +
-        url_max   * 0.25 +
-        llm_score * 0.20 +
-        min(cred_hits * 10, 100) * 0.10 +
+        ph_score  * 0.40 +
+        url_max   * 0.35 +
+        min(cred_hits * 10, 100) * 0.15 +
         voice_max * 0.10
     )
     overall = max(overall, int(ph_score * 0.5))
@@ -842,7 +823,7 @@ def _run_static_attachment_scan(content: bytes, filename: str) -> dict:
 def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dict:
     """Deep content analysis: extract text and run full pipeline.
     For audio files: calls the voice-scanner container API.
-    For documents: extracts text and runs llama:latest phishing analysis.
+    For documents: extracts text and runs llama3:latest phishing analysis.
     """
     t0 = time.time()
     result = {"filename": filename, "scan_type": "deep"}
@@ -925,7 +906,7 @@ def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dic
     except Exception:
         result["ai_detection"] = _fallback_ai_detect(extracted_text)
 
-    # ── LLM Deep Content Analysis via llama:latest ─────────────────────────────
+    # ── LLM Deep Content Analysis via llama3:latest ─────────────────────────────
     # For PDF, Word, and text files: pass content to llama for full security analysis
     DEEP_ANALYSIS_EXTS = {".pdf", ".doc", ".docx", ".txt", ".csv", ".log", ".rtf", ".odt"}
     if ext in DEEP_ANALYSIS_EXTS and extracted_text.strip():
@@ -946,7 +927,7 @@ def _run_deep_attachment_scan(content: bytes, filename: str, att_id: int) -> dic
                 "sensitive_data": [],
                 "threats_detected": [],
                 "summary": f"LLM analysis unavailable: {exc}",
-                "model": "llama:latest",
+                "model": "llama3:latest",
                 "available": False,
                 "error": str(exc),
             }
@@ -1051,9 +1032,9 @@ def email_retrain_status():
 # ── Utility helpers ───────────────────────────────────────────────────────────
 
 def _score_to_tier(score: int) -> str:
-    if score >= 70: return "CRITICAL"
-    if score >= 50: return "HIGH"
-    if score >= 30: return "MEDIUM"
+    if score >= 90: return "CRITICAL"
+    if score >= 70: return "HIGH"
+    if score >= 40: return "MEDIUM"
     return "LOW"
 
 
@@ -1078,18 +1059,27 @@ def _check_dkim(headers: dict) -> Optional[bool]:
 
 def _fallback_ai_detect(text: str) -> dict:
     import re
-    ai_patterns = [
-        r"\bcertainly\b", r"\bof course\b", r"\bplease do not hesitate\b",
-        r"\bshould you (have|need|require)\b", r"\bfeel free to\b",
-        r"\bi hope this (email|message|finds)\b", r"\babsolutely\b",
+    ai_pattern_labels = [
+        (r"\bcertainly\b",                       "formal filler: 'certainly'"),
+        (r"\bof course\b",                        "formal filler: 'of course'"),
+        (r"\bplease do not hesitate\b",           "AI boilerplate: 'please do not hesitate'"),
+        (r"\bshould you (have|need|require)\b",   "AI boilerplate: 'should you need/have'"),
+        (r"\bfeel free to\b",                     "AI boilerplate: 'feel free to'"),
+        (r"\bi hope this (email|message|finds)\b","AI opener: 'I hope this email...'"),
+        (r"\babsolutely\b",                        "over-formal: 'absolutely'"),
+        (r"\bkindly\b",                            "over-formal: 'kindly'"),
+        (r"\brest assured\b",                      "AI filler: 'rest assured'"),
+        (r"\bwe regret to inform\b",               "template phrase: 'we regret to inform'"),
     ]
-    hits = sum(1 for p in ai_patterns if re.search(p, text, re.IGNORECASE))
-    prob = min(0.9, hits * 0.15)
+    matched = [label for pattern, label in ai_pattern_labels
+               if re.search(pattern, text, re.IGNORECASE)]
+    prob = min(0.9, len(matched) * 0.15)
     return {
         "ai_generated_probability": prob,
         "is_ai_generated": prob >= 0.5,
         "method": "heuristic",
-        "indicators": hits,
+        "model": "heuristic-fallback",
+        "indicators": matched,
     }
 
 
@@ -1128,8 +1118,18 @@ def _fallback_cred_scan(text: str) -> dict:
     for kind, pat in patterns.items():
         for match in re.findall(pat, text):
             findings.append({"type": kind, "value": match, "severity": "medium"})
-    return {"total_findings": len(findings), "findings": findings[:20],
-            "risk_score": min(len(findings) * 10, 100)}
+    total = len(findings)
+    risk  = min(total * 10, 100)
+    if risk >= 70:
+        label = "High"
+    elif risk >= 30:
+        label = "Medium"
+    elif total > 0:
+        label = "Low"
+    else:
+        label = "Clean"
+    return {"total_findings": total, "findings": findings[:20],
+            "risk_score": risk, "risk_label": label}
 
 
 def _extract_text_from_bytes(content: bytes, filename: str) -> str:
@@ -1150,6 +1150,143 @@ def _extract_text_from_bytes(content: bytes, filename: str) -> str:
             return content.decode("utf-8", errors="replace")
     except Exception:
         return ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SMTP Gateway Ingest — receives intercepted emails from smtp-fraud-gateway
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SmtpIngestRequest(BaseModel):
+    message_id:    str = Field(default="", description="Email Message-ID header")
+    sender:        str = Field(default="", description="Envelope sender")
+    recipients:    List[str] = Field(default_factory=list)
+    subject:       str = Field(default="", description="Subject line")
+    reply_to:      str = Field(default="", description="Reply-To header")
+    body_text:     str = Field(default="", description="Plain-text body")
+    body_html:     str = Field(default="", description="HTML body")
+    raw_headers:   str = Field(default="", description="Raw email headers")
+    date_str:      str = Field(default="", description="Date header string")
+    urls:          List[str] = Field(default_factory=list)
+    from_name:     str = Field(default="", description="Sender display name")
+    gateway_score: float = Field(default=0, description="Pre-computed XGBoost score from SMTP gateway (0-100)")
+    gateway_tier:  str = Field(default="", description="Pre-computed risk tier from SMTP gateway")
+    decision:      str = Field(default="", description="SMTP gateway decision (BLOCK/FLAG/ALLOW)")
+
+
+def _run_background_analysis(email_id: int, payload_dict: dict):
+    """Background task: run full 7-module analysis and update the email in DB."""
+    try:
+        phishing_req = PhishingAnalysisRequest(
+            from_name=payload_dict.get("from_name", ""),
+            from_email=payload_dict.get("sender", ""),
+            reply_to=payload_dict.get("reply_to", ""),
+            subject=payload_dict.get("subject", ""),
+            raw_headers=payload_dict.get("raw_headers", ""),
+            body=payload_dict.get("body_text") or payload_dict.get("body_html") or "",
+        )
+        analysis_response = analyze_phishing_full(phishing_req)
+        analysis = json.loads(analysis_response.body.decode("utf-8"))
+
+        overall_score = float(analysis.get("overall_score", 0))
+        risk_tier = _score_to_tier(int(round(overall_score)))
+
+        update_email_analysis(
+            email_id=email_id,
+            analysis=analysis,
+            risk_score=int(round(overall_score)),
+            risk_tier=risk_tier,
+        )
+        print(f"[SMTP-Ingest] Background analysis done for email {email_id}: score={overall_score}, tier={risk_tier}")
+    except Exception as e:
+        print(f"[SMTP-Ingest] Background analysis failed for email {email_id}: {e}")
+        # Still update with error info so the email doesn't stay UNKNOWN forever
+        update_email_analysis(
+            email_id=email_id,
+            analysis={"error": str(e), "source": "SMTP_GATEWAY"},
+            risk_score=payload_dict.get("gateway_score", 0),
+            risk_tier=payload_dict.get("gateway_tier", "UNKNOWN"),
+        )
+
+
+@app.post("/ingest/smtp")
+def ingest_smtp_email(payload: SmtpIngestRequest, background_tasks: BackgroundTasks):
+    """
+    Ingest an email intercepted by the SMTP Fraud Gateway.
+
+    1. Saves the email to email_inbox (PostgreSQL) immediately
+    2. Applies the gateway's XGBoost score as an initial risk_score
+    3. Kicks off full 7-module analysis in the background
+    4. Returns instantly so the SMTP handler isn't blocked
+
+    The SMTP gateway uses its own local XGBoost model for the instant
+    BLOCK/ALLOW decision. The full analysis updates the DB later, and
+    the Mailbox UI picks it up on next refresh.
+    """
+    import uuid
+    t0 = time.time()
+
+    msg_id = payload.message_id or f"<smtp-gw-{uuid.uuid4().hex[:12]}@aegisai>"
+
+    # Determine initial tier from gateway_score (provided by SMTP handler)
+    gw_score = getattr(payload, "gateway_score", 0) or 0
+    gw_tier = getattr(payload, "gateway_tier", "") or ""
+    if not gw_tier:
+        gw_tier = _score_to_tier(int(round(gw_score)))
+
+    # ── Step 1: Save email to DB immediately ────────────────────────────────
+    email_data = {
+        "message_id":       msg_id,
+        "subject":          payload.subject,
+        "sender":           payload.sender,
+        "receiver":         ", ".join(payload.recipients) if payload.recipients else "",
+        "reply_to":         payload.reply_to,
+        "date_str":         payload.date_str,
+        "headers":          {"raw": payload.raw_headers[:5000]} if payload.raw_headers else {},
+        "body_text":        payload.body_text,
+        "body_html":        payload.body_html,
+        "urls":             payload.urls,
+        "has_attachments":  False,
+        "attachment_count": 0,
+    }
+
+    saved = save_email(email_data)
+    email_id = saved["id"] if saved else None
+
+    # ── Step 2: Set initial score from gateway (fast) ───────────────────────
+    if email_id and gw_score > 0:
+        update_email_analysis(
+            email_id=email_id,
+            analysis={"source": "SMTP_GATEWAY", "gateway_score": gw_score, "status": "analyzing"},
+            risk_score=int(round(gw_score)),
+            risk_tier=gw_tier,
+        )
+
+    # ── Step 3: Kick off full analysis in background ────────────────────────
+    if email_id:
+        payload_dict = {
+            "from_name":    payload.from_name,
+            "sender":       payload.sender,
+            "reply_to":     payload.reply_to,
+            "subject":      payload.subject,
+            "raw_headers":  payload.raw_headers,
+            "body_text":    payload.body_text,
+            "body_html":    payload.body_html,
+            "gateway_score": gw_score,
+            "gateway_tier":  gw_tier,
+        }
+        background_tasks.add_task(_run_background_analysis, email_id, payload_dict)
+
+    processing_ms = round((time.time() - t0) * 1000)
+
+    return JSONResponse(content={
+        "email_id":      email_id,
+        "overall_score": gw_score,
+        "risk_tier":     gw_tier,
+        "decision":      "BLOCK" if gw_score >= 90 else ("FLAG" if gw_score >= 70 else ("REVIEW" if gw_score >= 40 else "ALLOW")),
+        "processing_ms": processing_ms,
+        "status":        "saved_analyzing",
+        "source":        "SMTP_GATEWAY",
+    })
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

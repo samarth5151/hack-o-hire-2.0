@@ -53,8 +53,10 @@ prompt_builder = PromptBuilder(template=template)
 
 # You can use Llama3.1 to provide better responses, but since Qwen 4b is 
 # a smaller and faster model, you can use it on less-powerful hardware as well
-generator = OllamaGenerator(model="qwen3:8b",
-                            url = "http://localhost:11434",
+import os as _os
+
+generator = OllamaGenerator(model="llama3",
+                            url = _os.environ.get("OLLAMA_HOST", _os.environ.get("OLLAMA_URL", "http://localhost:11434")),
                             generation_kwargs={
                               "num_predict": 100,
                               "temperature": 0.9,

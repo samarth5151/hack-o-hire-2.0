@@ -28,6 +28,11 @@ FALLBACK_SIGNATURES = {
     b"\x47\x49\x46\x38":  "GIF Image",
     b"\x42\x4d":           "BMP Image",
     b"\x23\x21":           "Script file (shebang)",
+    b"<!DOCTYPE":          "HTML Document",
+    b"<!doctype":          "HTML Document",
+    b"<html":              "HTML Document",
+    b"<HTML":              "HTML Document",
+    b"RIFF":               "RIFF/WebP Image",
 }
 
 HIGH_RISK_EXTENSIONS = {
@@ -43,6 +48,18 @@ MEDIUM_RISK_EXTENSIONS = {
     ".zip",  ".rar", ".7z",  ".gz",   ".tar",
     ".doc",  ".xls", ".ppt", ".docm", ".xlsm",
     ".pptm", ".iso", ".img", ".cab",  ".msp",
+}
+
+# HTML files are medium-risk: they can contain scripts and phishing forms
+# but are not inherently malicious by extension alone
+HTML_EXTENSIONS = {
+    ".htm", ".html", ".xhtml", ".shtml", ".svg",
+}
+
+# Image files are low-risk by extension; elevated only if content is anomalous
+IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp",
+    ".webp", ".tiff", ".tif", ".ico",
 }
 
 # MIME types that indicate high risk
@@ -97,7 +114,8 @@ def detect_with_fallback(file_bytes: bytes) -> tuple:
 
 def check_mismatch(ext: str, mime_type: str,
                    detected_type: str,
-                   file_bytes: bytes) -> tuple:
+                   file_bytes: bytes,
+                   filename: str = "") -> tuple:
     """
     Check if declared extension matches detected file type.
     Returns (mismatch: bool, description: str)
@@ -138,9 +156,13 @@ def check_mismatch(ext: str, mime_type: str,
                     f"{detected_type}")
 
     # Executable disguised as something else
+    # Validate it's actually a PE (MZ header + PE signature at offset pointed by 0x3c)
     elif ext not in (".exe", ".dll", ".sys", ".drv") \
          and (mime_type in HIGH_RISK_MIMES
-              or file_bytes[:2] == b"\x4d\x5a"):
+              or (file_bytes[:2] == b"\x4d\x5a" and len(file_bytes) > 64
+                  and file_bytes[file_bytes[60]:file_bytes[60]+4] == b"PE\x00\x00"
+                  if len(file_bytes) > 64 and file_bytes[60] < len(file_bytes) - 4 else
+                  file_bytes[:2] == b"\x4d\x5a")):
         mismatch = True
         desc     = (f"Windows executable disguised as {ext}")
 
@@ -158,13 +180,16 @@ def check_mismatch(ext: str, mime_type: str,
             pass
 
     # Double extension check e.g. invoice.pdf.exe
-    filename_parts = ext.split(".")
-    if len(filename_parts) > 2:
-        real_ext = "." + filename_parts[-1]
-        if real_ext in HIGH_RISK_EXTENSIONS:
-            mismatch = True
-            desc     = (f"Double extension detected — "
-                        f"hiding {real_ext}")
+    # Must use the full filename, not the already-extracted ext
+    if filename:
+        fname_parts = filename.lower().split(".")
+        if len(fname_parts) > 2:
+            real_ext    = "." + fname_parts[-1]
+            claimed_ext = "." + fname_parts[-2]
+            if real_ext in HIGH_RISK_EXTENSIONS and claimed_ext != real_ext:
+                mismatch = True
+                desc     = (f"Double extension: '{claimed_ext}' hides actual "
+                            f"executable '{real_ext}'")
 
     return mismatch, desc
 
@@ -188,7 +213,7 @@ def detect(file_bytes: bytes, filename: str) -> dict:
 
     # Check for mismatch
     mismatch, mismatch_desc = check_mismatch(
-        ext, mime_type, detected_type, file_bytes
+        ext, mime_type, detected_type, file_bytes, filename
     )
 
     # Determine risk level
@@ -202,6 +227,12 @@ def detect(file_bytes: bytes, filename: str) -> dict:
         risk = "Medium"
     elif ext in MEDIUM_RISK_EXTENSIONS:
         risk = "Medium"
+    # HTML is medium-risk: can contain scripts/forms but not inherently malicious
+    elif ext in HTML_EXTENSIONS or mime_type in ("text/html", "application/xhtml+xml"):
+        risk = "Medium"
+    # Images are low-risk by themselves; the image analyzer will escalate if needed
+    elif ext in IMAGE_EXTENSIONS or (mime_type and mime_type.startswith("image/")):
+        risk = "Low"
     else:
         risk = "Info"
 

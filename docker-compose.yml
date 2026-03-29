@@ -95,7 +95,7 @@ services:
     entrypoint: >
       /bin/sh -c "
         sleep 15 &&
-        OLLAMA_HOST=http://sandbox-ollama:11434 ollama pull tinyllama &&
+        OLLAMA_HOST=http://sandbox-ollama:11434 ollama pull llama3 &&
         echo 'Model ready'
       "
     restart: "no"
@@ -182,6 +182,11 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8007:8007"
+    environment:
+      OLLAMA_HOST: http://sandbox-ollama:11434
+      OLLAMA_URL: http://sandbox-ollama:11434
+    depends_on:
+      - sandbox-ollama
     restart: unless-stopped
     networks:
       - aegisai-net
@@ -214,6 +219,41 @@ services:
     networks:
       - aegisai-net
 
+  # ── SMTP Fraud Gateway — pre-delivery email interception ───────────────────
+  smtp-fraud-gateway:
+    build:
+      context: ./smtp-fraud-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+      - "2525:2525"
+    environment:
+      DATABASE_URL: postgresql://dlp:dlp@postgres:5432/dlp
+      EMAIL_MONITOR_URL: "http://email-monitor:8009"
+      GATEWAY_SMTP_PORT: "2525"
+      REJECT_THRESHOLD: "0.70"
+      QUARANTINE_THRESHOLD: "0.40"
+      TAG_THRESHOLD: "0.20"
+      MAILHOG_HOST: mailhog
+      MAILHOG_PORT: "1025"
+      PYTHONUNBUFFERED: "1"
+      OLLAMA_URL: "http://sandbox-ollama:11434"
+      LLAMA_MODEL: "llama3"
+      LLAMA_TIMEOUT: "45"
+      ATTACHMENT_SCANNER_URL: "http://attachment-scanner:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      email-monitor:
+        condition: service_started
+      mailhog:
+        condition: service_started
+      sandbox-ollama:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - aegisai-net
+
   # ── Website Spoofing ─────────────────────────────────────────────────────
   website-spoofing:
     build:
@@ -221,6 +261,72 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8008:5000"
+    restart: unless-stopped
+    networks:
+      - aegisai-net
+
+  # ── Retrain Scheduler — nightly automated model retraining ───────────────
+  retrain-scheduler:
+    build:
+      context: ./retrain-scheduler
+      dockerfile: Dockerfile
+    ports:
+      - "9000:9000"
+    environment:
+      RETRAIN_HOUR:   "2"
+      RETRAIN_MINUTE: "0"
+      RETRAIN_TZ:     "UTC"
+      VOICE_RETRAIN_URL:   "http://voice-scanner:8000/admin/retrain"
+      VOICE_STATUS_URL:    "http://voice-scanner:8000/admin/retrain/status"
+      WEBSITE_RETRAIN_URL: "http://website-spoofing:5000/admin/retrain"
+      WEBSITE_STATUS_URL:  "http://website-spoofing:5000/admin/retrain/status"
+      EMAIL_RETRAIN_URL:   "http://email-monitor:8009/admin/retrain"
+      EMAIL_STATUS_URL:    "http://email-monitor:8009/admin/retrain/status"
+      HTTP_TIMEOUT:   "600"
+      STATE_PATH:     "/data/scheduler_state.json"
+    volumes:
+      - scheduler_data:/data
+    depends_on:
+      - voice-scanner
+      - website-spoofing
+      - email-monitor
+    restart: unless-stopped
+    networks:
+      - aegisai-net
+
+  # ── Outlook Plugin — HTTPS server + container API proxy ──────────────────
+  outlook-plugin:
+    build:
+      context: ./outlook-plugin
+      dockerfile: Dockerfile
+    container_name: fraudshield_plugin
+    ports:
+      - "3000:3000"
+    environment:
+      EMAIL_HOST:   email-monitor
+      EMAIL_PORT:   "8009"
+      VOICE_HOST:   voice-scanner
+      VOICE_PORT:   "8000"
+      CRED_HOST:    credential-scanner
+      CRED_PORT:    "8002"
+      GUARD_HOST:   prompt-guard
+      GUARD_PORT:   "8005"
+      ATTACH_HOST:  attachment-scanner
+      ATTACH_PORT:  "8007"
+      SMTP_HOST:    smtp-fraud-gateway
+      SMTP_PORT:    "8010"
+      WEBSITE_HOST: website-spoofing
+      WEBSITE_PORT: "5000"
+      CERT_DIR:     /root/.office-addin-dev-certs
+    volumes:
+      - plugin_certs:/root/.office-addin-dev-certs
+    depends_on:
+      - email-monitor
+      - voice-scanner
+      - credential-scanner
+      - prompt-guard
+      - attachment-scanner
+      - smtp-fraud-gateway
     restart: unless-stopped
     networks:
       - aegisai-net
@@ -233,6 +339,8 @@ services:
     volumes:
       - frontend_dist:/app/dist
     restart: "no"
+    networks:
+      - aegisai-net
 
   # ── Nginx — Unified reverse proxy + static frontend ───────────────────────
   nginx:
@@ -252,6 +360,7 @@ services:
       - attachment-scanner
       - website-spoofing
       - email-monitor
+      - retrain-scheduler
     restart: unless-stopped
     networks:
       - aegisai-net
@@ -260,6 +369,8 @@ volumes:
   postgres_data:
   ollama_models:
   frontend_dist:
+  scheduler_data:
+  plugin_certs:
 
 networks:
   aegisai-net:

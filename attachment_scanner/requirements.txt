@@ -14,3 +14,8 @@ py7zr
 yara-python
 requests
 psycopg2-binary
+beautifulsoup4
+lxml
+piexif
+pyzbar
+numpy

@@ -282,38 +282,138 @@ def _content_scan(z: zipfile.ZipFile) -> list:
     return findings
 
 
-# ── Layer D — Recursive nested archive scan ───────────────────────────────────
+# ── Layer D — Deep file scan (run specialized analyzers on inner files) ───────
 
-def _recursive_scan(file_bytes: bytes, depth: int = 0) -> list:
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".ico"}
+HTML_EXTENSIONS  = {".html", ".htm", ".hta", ".xhtml", ".svg"}
+PDF_EXTENSIONS   = {".pdf"}
+OFFICE_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".docm", ".xlsm", ".pptm"}
+
+MAX_DEEP_SCAN_FILES = 30  # cap on inner files to deep-scan per archive
+
+
+def _deep_analyze_single(data: bytes, fname: str, ext: str, inner_path: str) -> list:
+    """Run specialized analyzers on a single extracted file and tag findings."""
+    inner_findings = []
+
+    # HTML
+    if ext in HTML_EXTENSIONS:
+        try:
+            from html_analyzer import analyze as _html_analyze
+            inner_findings += _html_analyze(data)
+        except Exception:
+            pass
+
+    # Image
+    if ext in IMAGE_EXTENSIONS:
+        try:
+            from image_analyzer import analyze as _img_analyze
+            inner_findings += _img_analyze(data, fname)
+        except Exception:
+            pass
+
+    # PDF
+    if ext in PDF_EXTENSIONS:
+        try:
+            from pdf_analyzer import analyze as _pdf_analyze
+            inner_findings += _pdf_analyze(data)
+        except Exception:
+            pass
+
+    # Office
+    if ext in OFFICE_EXTENSIONS:
+        try:
+            from office_analyzer import analyze as _office_analyze
+            inner_findings += _office_analyze(data, fname)
+        except Exception:
+            pass
+
+    # Credential scan — universal, all extractable files
+    if len(data) < 5_000_000:
+        try:
+            from credential_scanner import scan as _cred_scan
+            inner_findings += _cred_scan(data)
+        except Exception:
+            pass
+
+    # Tag every finding with archive context
+    for f in inner_findings:
+        orig_stage = f.get("stage", "Unknown")
+        f["stage"]   = "ZIP Deep Scan"
+        f["context"] = inner_path
+        existing_why = f.get("why_flagged", "")
+        f["why_flagged"] = (
+            f"{existing_why} [Detected inside archive: {inner_path} by {orig_stage}]"
+            if existing_why else
+            f"Detected inside archive: {inner_path} by {orig_stage}"
+        )
+
+    return inner_findings
+
+def _deep_file_scan(z: zipfile.ZipFile, archive_name: str = "archive", depth: int = 0) -> list:
     """
-    Recursively unpacks nested ZIP archives up to MAX_RECURSION_DEPTH.
+    Extract individual files from the archive and run the appropriate
+    specialized analyzer on each one (HTML, image, PDF, Office, credential).
+    Nested archives are recursively unpacked and deep-scanned.
     """
     if depth >= MAX_RECURSION_DEPTH:
         return [_make_finding(
             rule        = "max_recursion_depth",
-            description = f"Max recursion depth ({MAX_RECURSION_DEPTH}) reached",
-            detail      = "Deeply nested archives — possible zip bomb or evasion",
+            description = f"Max recursion depth ({MAX_RECURSION_DEPTH}) reached — deep scan stopped",
+            detail      = "Deeply nested archives — possible zip bomb or evasion technique",
             risk        = "High",
             category    = "zip_bomb",
         )]
 
     findings = []
+    total_read    = 0
+    files_scanned = 0
 
-    try:
-        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            for info in z.infolist():
-                ext = _get_ext(info.filename)
-                if ext == ".zip" and info.file_size < MAX_SINGLE_FILE_SIZE:
-                    try:
-                        nested_bytes = z.read(info.filename)
-                        nested_findings = _recursive_scan(nested_bytes, depth + 1)
-                        for f in nested_findings:
-                            f["context"] = f"{info.filename} > {f.get('context', '')}"
-                        findings += nested_findings
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+    for info in z.infolist():
+        if info.filename.endswith("/"):
+            continue
+        if files_scanned >= MAX_DEEP_SCAN_FILES:
+            findings.append(_make_finding(
+                rule        = "deep_scan_file_limit",
+                description = f"Deep scan capped at {MAX_DEEP_SCAN_FILES} files",
+                detail      = "Remaining files in archive were not deep-scanned",
+                risk        = "Low",
+                category    = "scanner_warning",
+            ))
+            break
+        if info.file_size > MAX_SINGLE_FILE_SIZE:
+            continue
+        if total_read >= MAX_TOTAL_SIZE:
+            break
+
+        ext = _get_ext(info.filename)
+
+        try:
+            data = z.read(info.filename)
+        except Exception:
+            continue
+
+        total_read += len(data)
+        inner_path = f"{archive_name} → {info.filename}"
+
+        inner_findings = []
+
+        # Nested archive → recurse
+        if ext in ARCHIVE_EXTENSIONS and ext == ".zip":
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as nested_z:
+                    inner_findings += _deep_file_scan(
+                        nested_z, inner_path, depth + 1
+                    )
+            except Exception:
+                pass
+
+        # Run specialized analyzers on this file
+        inner_findings += _deep_analyze_single(data, info.filename, ext, inner_path)
+
+        findings += inner_findings
+        if inner_findings:
+            files_scanned += 1
 
     return findings
 
@@ -323,7 +423,7 @@ def _recursive_scan(file_bytes: bytes, depth: int = 0) -> list:
 def _7z_scan(file_bytes: bytes) -> list:
     """
     Uses py7zr to scan .7z archives.
-    Checks filenames and content signatures.
+    Checks filenames, content signatures, and runs deep file analysis.
     """
     try:
         import py7zr
@@ -345,21 +445,22 @@ def _7z_scan(file_bytes: bytes) -> list:
             # Filename scan
             findings += _filename_scan(all_files)
 
-            # Content scan — read all files
+            # Content scan + deep file analysis
             try:
                 extracted = z.readall()
                 if extracted:
-                    seen_sigs  = set()
-                    total_read = 0
+                    seen_sigs    = set()
+                    total_read   = 0
+                    files_deep   = 0
                     for fname, file_obj in extracted.items():
                         if total_read >= MAX_TOTAL_SIZE:
                             break
                         try:
-                            data = file_obj.read(min(
-                                MAX_SINGLE_FILE_SIZE, 4096
-                            ))
+                            data = file_obj.read(MAX_SINGLE_FILE_SIZE)
                             total_read += len(data)
-                            data_lower  = data.lower()
+
+                            # Signature scan (first 2KB)
+                            data_lower = data[:2048].lower()
                             for sig, desc, risk, category in CONTENT_SIGNATURES:
                                 if sig.lower() in data_lower and sig not in seen_sigs:
                                     seen_sigs.add(sig)
@@ -371,6 +472,17 @@ def _7z_scan(file_bytes: bytes) -> list:
                                         category    = category,
                                         context     = fname,
                                     ))
+
+                            # Deep file analysis
+                            if files_deep < MAX_DEEP_SCAN_FILES:
+                                ext = _get_ext(fname)
+                                inner_path = f"archive → {fname}"
+                                inner_findings = _deep_analyze_single(
+                                    data, fname, ext, inner_path
+                                )
+                                findings += inner_findings
+                                if inner_findings:
+                                    files_deep += 1
                         except Exception:
                             pass
             except Exception:
@@ -422,6 +534,7 @@ def analyze(file_bytes: bytes) -> list:
                 findings += _structure_check(file_bytes, z)     # Layer A
                 findings += _filename_scan(z.namelist())         # Layer B
                 findings += _content_scan(z)                     # Layer C
+                findings += _deep_file_scan(z, "archive")       # Layer D (deep scan)
         except zipfile.BadZipFile:
             findings.append(_make_finding(
                 rule        = "corrupt_zip",
@@ -430,8 +543,6 @@ def analyze(file_bytes: bytes) -> list:
                 risk        = "Medium",
                 category    = "evasion",
             ))
-
-        findings += _recursive_scan(file_bytes)                  # Layer D
 
     # ── 7z format ─────────────────────────────────────────────────────────────
     elif file_bytes[:6] == b"\x37\x7a\xbc\xaf\x27\x1c":

@@ -8,14 +8,15 @@ import {
   RiFileCopyLine, RiErrorWarningLine, RiInformationLine,
   RiHistoryLine, RiRefreshLine, RiFileTextLine, RiFileCodeLine,
   RiFilePdfLine, RiFileZipLine, RiFileWarningLine, RiShieldLine,
-  RiTimeLine,
+  RiTimeLine, RiHtml5Line, RiImageLine, RiKeyLine, RiQuestionLine,
+  RiLightbulbLine,
 } from 'react-icons/ri'
 import {
   Card, Btn, RiskBadge, ScoreMeter, ResultPanel,
   PageWrapper, SectionHeader, SidebarStat, SubTabs,
 } from '../components/ui'
 
-const fileTypes = ['PDF', 'DOCX', 'XLSX', 'EXE / PE', 'ZIP / RAR', 'JAR', 'PY / JS', 'Images']
+const fileTypes = ['PDF', 'DOCX / XLSX', 'EXE / PE', 'ZIP / RAR', 'HTML / HTM', 'Images', 'JAR', 'PY / JS']
 
 /* ── File icon by extension ──────────────────────────────────────────────── */
 function FileIcon({ filename, className = 'text-base' }) {
@@ -26,6 +27,9 @@ function FileIcon({ filename, className = 'text-base' }) {
   if (['doc','docx','xls','xlsx','ppt','pptx','docm','xlsm'].includes(ext))
                                                            return <RiFileTextLine className={`text-blue-400 ${className}`} />
   if (['exe','dll','sys','drv','msi'].includes(ext))       return <RiFileWarningLine className={`text-red-500 ${className}`} />
+  if (['htm','html','xhtml','shtml','svg'].includes(ext))  return <RiHtml5Line   className={`text-orange-400 ${className}`} />
+  if (['jpg','jpeg','png','gif','bmp','webp','tiff','tif','ico'].includes(ext))
+                                                           return <RiImageLine   className={`text-teal-400 ${className}`} />
   return <RiFileList3Line className={`text-slate-400 ${className}`} />
 }
 
@@ -152,6 +156,7 @@ function HistoryRow({ row, index }) {
 function ScanHistory({ refreshTrigger }) {
   const [history, setHistory]     = useState([])
   const [loading, setLoading]     = useState(false)
+  const [histError, setHistError] = useState(null)
   const [lastRefresh, setLastRefresh] = useState(null)
   const [filter, setFilter]       = useState('All')
 
@@ -159,14 +164,18 @@ function ScanHistory({ refreshTrigger }) {
 
   const fetchHistory = useCallback(async () => {
     setLoading(true)
+    setHistError(null)
     try {
       const res = await fetch('/api/attachment-scan/history?limit=50')
       if (res.ok) {
         const data = await res.json()
         setHistory(data.history || [])
         setLastRefresh(new Date())
+      } else {
+        setHistError(`Server returned ${res.status}`)
       }
     } catch (e) {
+      setHistError('Could not reach scanner service — is it running?')
       console.warn('History fetch failed:', e)
     } finally {
       setLoading(false)
@@ -239,6 +248,11 @@ function ScanHistory({ refreshTrigger }) {
             <RiLoader4Line />
           </motion.span>
           Loading history...
+        </div>
+      ) : histError ? (
+        <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[12px]">
+          <RiAlertLine className="text-base flex-shrink-0" />
+          <span>{histError}</span>
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-slate-400 gap-2">
@@ -317,6 +331,14 @@ function FindingRow({ finding, index }) {
             transition={{ duration: 0.2 }}
             className="bg-white border-t border-slate-100 px-4 py-3 space-y-2"
           >
+            {finding.why_flagged && (
+              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+                <RiLightbulbLine className="text-amber-500 mt-0.5 flex-shrink-0 text-sm" />
+                <p className="text-[11px] text-amber-800 leading-snug">
+                  <span className="font-semibold">Why flagged: </span>{finding.why_flagged}
+                </p>
+              </div>
+            )}
             {finding.detail && (
               <p className="text-[11px] text-slate-600"><span className="font-semibold">Detail: </span>{finding.detail}</p>
             )}
@@ -343,20 +365,45 @@ function AnalyzerSection({ analyzer, index }) {
   const [open, setOpen] = useState(analyzer.findings_count > 0)
   const cfg = SEVERITY_CONFIG[analyzer.status] ?? SEVERITY_CONFIG.clean
 
+  const isCredential = analyzer.name === 'Credential Exposure Scanner'
+  const isHtml       = analyzer.name === 'HTML Analyzer'
+  const isImage      = analyzer.name === 'Image Analyzer'
+  const isDeepScan   = analyzer.name === 'ZIP Deep Scan'
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.08 }}
-      className="rounded-xl border border-slate-200 overflow-hidden"
+      className={`rounded-xl border overflow-hidden ${
+        isCredential ? 'border-teal-200' : isHtml ? 'border-orange-200' : isImage ? 'border-violet-200' : isDeepScan ? 'border-amber-200' : 'border-slate-200'
+      }`}
     >
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left bg-slate-50 hover:bg-slate-100 transition-colors"
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+          isCredential ? 'bg-teal-50 hover:bg-teal-100' :
+          isHtml       ? 'bg-orange-50 hover:bg-orange-100' :
+          isImage      ? 'bg-violet-50 hover:bg-violet-100' :
+          isDeepScan   ? 'bg-amber-50 hover:bg-amber-100' :
+          'bg-slate-50 hover:bg-slate-100'
+        }`}
       >
-        <StatusPill status={analyzer.status} />
+        {/* Analyzer-specific icon */}
+        {isCredential && <RiKeyLine    className="text-teal-500 flex-shrink-0" />}
+        {isHtml       && <RiHtml5Line  className="text-orange-500 flex-shrink-0" />}
+        {isImage      && <RiImageLine  className="text-violet-500 flex-shrink-0" />}
+        {isDeepScan   && <RiFileZipLine className="text-amber-500 flex-shrink-0" />}
+        {!isCredential && !isHtml && !isImage && !isDeepScan && <StatusPill status={analyzer.status} />}
+
         <span className="flex-1 text-[13px] font-semibold text-slate-800">{analyzer.name}</span>
-        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${analyzer.findings_count > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+
+        {/* NEW badge for new analyzers */}
+        {(isCredential || isHtml || isImage || isDeepScan) && (
+          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 flex-shrink-0">NEW</span>
+        )}
+
+        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${analyzer.findings_count > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
           {analyzer.findings_count} finding{analyzer.findings_count !== 1 ? 's' : ''}
         </span>
         <span className="text-slate-400">{open ? <RiArrowUpSLine /> : <RiArrowDownSLine />}</span>
@@ -518,7 +565,9 @@ export default function AttachmentAnalyzer() {
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-[22px] font-bold text-slate-900">Malicious Attachment Analyzer</h1>
-        <p className="text-[13px] text-slate-500 mt-1">Static analysis · YARA rules · Office macros · PDF streams · MalwareBazaar hashing</p>
+        <p className="text-[13px] text-slate-500 mt-1">
+          Static analysis · YARA rules · PDF/Office/PE/ZIP · HTML phishing · Image steganography · Credential exposure · MalwareBazaar hashing
+        </p>
       </div>
 
       {/* Main tabs */}
@@ -596,13 +645,13 @@ export default function AttachmentAnalyzer() {
                     <RiLoader4Line className="text-4xl mb-3 text-sky-500" />
                   </motion.div>
                   <h3 className="text-sm font-bold text-slate-700">Analyzing file through 4 phases...</h3>
-                  <p className="text-xs mt-1">Running file type detection, deep analysis, hash check, and risk scoring.</p>
+                  <p className="text-xs mt-1">Type detection · Deep content · HTML/Image/Credential scan · Hash check · Risk verdict</p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center text-sky-600">
                   <RiFolderOpenLine className="text-4xl mb-3" />
                   <h3 className="text-sm font-bold text-slate-800">Drop file here or click to upload</h3>
-                  <p className="text-xs text-slate-500 mt-1">PDF, DOCX, XLSX, EXE, ZIP, JAR · Max 100 MB</p>
+                  <p className="text-xs text-slate-500 mt-1">PDF, DOCX, XLSX, EXE, ZIP, HTML, Images · Max 100 MB</p>
                 </div>
               )}
             </div>
@@ -628,7 +677,8 @@ export default function AttachmentAnalyzer() {
                     <p className="text-[14px] font-bold text-slate-800">{scannedData.filename}</p>
                     <p className="text-[11px] text-slate-400">
                       {(scannedData.file_size_kb || 0).toFixed(2)} KB
-                      {scannedData.analysis_time_ms && ` · Analyzed in ${scannedData.analysis_time_ms}ms`}
+                      {scannedData.analysis_time_ms != null && ` · ${Math.round(scannedData.analysis_time_ms)}ms`}
+                      {scannedData.scanned_at && ` · ${new Date(scannedData.scanned_at).toLocaleTimeString()}`}
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -805,9 +855,18 @@ export default function AttachmentAnalyzer() {
           <Card>
             <SectionHeader title="Detection by File Type" />
             <div className="space-y-2">
-              {[{ t: 'PDF', pct: 45 }, { t: 'DOCX/XLSX', pct: 30 }, { t: 'EXE', pct: 20 }, { t: 'Other', pct: 5 }].map(({ t, pct }) => (
+              {[
+                { t: 'PDF',       pct: 38 },
+                { t: 'DOCX/XLSX', pct: 25 },
+                { t: 'HTML',      pct: 18, isNew: true },
+                { t: 'EXE',       pct: 12 },
+                { t: 'Images',    pct: 7, isNew: true },
+              ].map(({ t, pct, isNew }) => (
                 <div key={t} className="flex items-center gap-2">
-                  <span className="text-[12px] text-slate-500 w-20">{t}</span>
+                  <span className="text-[12px] text-slate-500 w-20 flex items-center gap-1">
+                    {t}
+                    {isNew && <span className="text-[8px] font-bold px-1 rounded bg-teal-100 text-teal-600">NEW</span>}
+                  </span>
                   <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <motion.div
                       className="h-full bg-gradient-to-r from-sky-400 to-sky-500 rounded-full"
@@ -827,17 +886,22 @@ export default function AttachmentAnalyzer() {
             <SectionHeader title="Analysis Pipeline" />
             <div className="space-y-2">
               {[
-                { num: '1', name: 'File Type Detection',    desc: 'Magic bytes + MIME' },
-                { num: '2', name: 'Deep Content Analysis',  desc: 'PDF · Office · PE · YARA' },
-                { num: '3', name: 'Hash Reputation',        desc: 'MalwareBazaar offline DB' },
-                { num: '4', name: 'Risk Verdict',           desc: 'Rule-based scoring' },
-              ].map(({ num, name, desc }) => (
+                { num: '1', name: 'File Type Detection',    desc: 'Magic bytes · MIME · extension spoof', color: 'bg-sky-100 text-sky-600' },
+                { num: '2', name: 'Deep Content Analysis',  desc: 'PDF · Office · PE · ZIP · HTML · Image', color: 'bg-violet-100 text-violet-600' },
+                { num: '2a', name: 'ZIP Recursive Deep Scan', desc: 'Extract inner files → run full analysis on each', color: 'bg-amber-100 text-amber-600', isNew: true },
+                { num: '2b', name: 'Credential Exposure',   desc: 'API keys · tokens · passwords (all files)', color: 'bg-teal-100 text-teal-600', isNew: true },
+                { num: '3', name: 'Hash Reputation',        desc: 'MalwareBazaar offline DB', color: 'bg-sky-100 text-sky-600' },
+                { num: '4', name: 'Risk Verdict',           desc: 'Weighted scoring · FP guard', color: 'bg-sky-100 text-sky-600' },
+              ].map(({ num, name, desc, color, isNew }) => (
                 <div key={num} className="flex items-center gap-3">
-                  <div className="w-6 h-6 rounded-full bg-sky-100 text-sky-600 text-[11px] font-bold flex items-center justify-center flex-shrink-0">
+                  <div className={`w-7 h-6 rounded-full ${color} text-[10px] font-bold flex items-center justify-center flex-shrink-0`}>
                     {num}
                   </div>
-                  <div>
-                    <p className="text-[12px] font-semibold text-slate-700">{name}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[12px] font-semibold text-slate-700">{name}</p>
+                      {isNew && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-700">NEW</span>}
+                    </div>
                     <p className="text-[10px] text-slate-400">{desc}</p>
                   </div>
                 </div>

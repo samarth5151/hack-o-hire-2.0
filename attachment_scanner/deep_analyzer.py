@@ -1,11 +1,11 @@
 # attachment_scanner/deep_analyzer.py
 """
-Deep content analysis for attachments using llama:latest.
+Deep content analysis for attachments using llama3:latest.
 
 Supported file types:
-  - PDF        → extract text via pdfminer/PyMuPDF, analyze with llama:latest
-  - Word (DOCX)→ extract text via python-docx, analyze with llama:latest
-  - Text files → pass content directly to llama:latest
+  - PDF        → extract text via pdfminer/PyMuPDF, analyze with llama3:latest
+  - Word (DOCX)→ extract text via python-docx, analyze with llama3:latest
+  - Text files → pass content directly to llama3:latest
   - Audio      → call voice-scanner container API
   - Images     → static analysis (metadata + basic checks)
 """
@@ -19,8 +19,8 @@ import requests
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-_OLLAMA_MODEL = "llama:latest"
-_OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+_OLLAMA_MODEL = "llama3"
+_OLLAMA_URL   = os.environ.get("OLLAMA_HOST", os.environ.get("OLLAMA_URL", "http://localhost:11434"))
 _VOICE_API    = os.environ.get("VOICE_SCANNER_URL", "http://localhost:8006")
 
 # Supported file extensions by category
@@ -149,7 +149,7 @@ Return ONLY valid JSON:
 
 
 def _call_llama_for_content(prompt: str) -> Dict:
-    """Call llama:latest via ollama and parse JSON response."""
+    """Call llama3:latest via ollama and parse JSON response."""
     try:
         import ollama
         resp = ollama.chat(
@@ -341,7 +341,7 @@ def analyze_deep(file_bytes: bytes, filename: str) -> Dict[str, Any]:
         "threats_detected":  llm_data.get("threats_detected", []),
         "impersonated_entity": llm_data.get("impersonated_entity"),
         "summary":           llm_data.get("summary", ""),
-        "model":             "llama:latest",
+        "model":             "llama3:latest",
         "available":         "error" not in llm_data,
     }
 

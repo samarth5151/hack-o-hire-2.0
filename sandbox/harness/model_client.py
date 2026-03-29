@@ -22,7 +22,7 @@ JUDGE_KEEP_ALIVE  = os.getenv("JUDGE_KEEP_ALIVE",  "15m")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 # Judge uses tinyllama — no extra download needed
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "tinyllama")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "llama3")
 
 # ── Per-scan prompt logging via ContextVar ────────────────────────────────────
 # Each scan task sets this to its scan_id; child tasks inherit the value.

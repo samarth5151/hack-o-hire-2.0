@@ -294,15 +294,22 @@ def get_emails(limit=50, offset=0, risk_filter=None, search=None,
                unread_only=False, flagged_only=False) -> list:
     p = _get_pool()
     if p is None:
-        return []
+        return [], 0
     conn = None
     try:
         conn = p.getconn()
         conditions = []
         params = []
+        # risk_filter may be a single tier OR comma-separated list (e.g. "LOW,MEDIUM")
         if risk_filter and risk_filter != "ALL":
-            conditions.append("risk_tier = %s")
-            params.append(risk_filter)
+            tiers = [t.strip().upper() for t in risk_filter.split(',') if t.strip()]
+            if len(tiers) == 1:
+                conditions.append("risk_tier = %s")
+                params.append(tiers[0])
+            elif len(tiers) > 1:
+                placeholders = ','.join(['%s'] * len(tiers))
+                conditions.append(f"risk_tier IN ({placeholders})")
+                params.extend(tiers)
         if unread_only:
             conditions.append("is_read = FALSE")
         if flagged_only:
@@ -320,6 +327,10 @@ def get_emails(limit=50, offset=0, risk_filter=None, search=None,
                 SELECT id, message_id, subject, sender, receiver, date_str,
                        has_attachments, attachment_count, is_read, is_flagged,
                        risk_score, risk_tier, received_at,
+                       COALESCE(analysis->>'source', 'IMAP') AS email_source,
+                       analysis->>'threat_type'    AS threat_type,
+                       analysis->>'combined_score' AS gateway_score,
+                       analysis->>'explanation'    AS explanation,
                        left(
                            CASE
                                WHEN length(trim(body_text)) > 20 THEN
@@ -421,11 +432,16 @@ def get_stats() -> dict:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    COUNT(*)                                            AS total,
-                    COUNT(*) FILTER (WHERE is_read  = FALSE)           AS unread,
-                    COUNT(*) FILTER (WHERE is_flagged = TRUE)          AS flagged,
-                    COUNT(*) FILTER (WHERE risk_tier IN ('CRITICAL','HIGH')) AS high_risk,
-                    COUNT(*) FILTER (WHERE has_attachments = TRUE)     AS with_attachments
+                    COUNT(*)                                                    AS total,
+                    COUNT(*) FILTER (WHERE is_read  = FALSE)                   AS unread,
+                    COUNT(*) FILTER (WHERE is_flagged = TRUE)                  AS flagged,
+                    COUNT(*) FILTER (WHERE risk_tier IN ('CRITICAL','HIGH'))   AS high_risk,
+                    COUNT(*) FILTER (WHERE has_attachments = TRUE)             AS with_attachments,
+                    COUNT(*) FILTER (WHERE risk_tier = 'CRITICAL')             AS critical,
+                    COUNT(*) FILTER (WHERE risk_tier = 'HIGH')                 AS high,
+                    COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')               AS medium,
+                    COUNT(*) FILTER (WHERE risk_tier = 'LOW')                  AS low,
+                    COUNT(*) FILTER (WHERE risk_tier = 'UNKNOWN')              AS unknown_tier
                 FROM email_inbox
             """)
             return dict(cur.fetchone())

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -11,8 +11,14 @@ import {
   RiMicLine, RiGlobalLine, RiMailLine, RiBarChartLine, RiDatabase2Line,
   RiPulseLine, RiAlertLine, RiFilterLine, RiArrowUpLine, RiArrowDownLine,
   RiShieldCheckLine, RiErrorWarningLine, RiBrainLine, RiEyeLine,
+  RiCalendarLine, RiToggleLine, RiToggleFill, RiSettings3Line,
 } from 'react-icons/ri'
 import { PageWrapper, PageHeader, ProgressBar } from '../../components/ui'
+
+const SCHEDULER_STATUS_URL  = '/api/retrain-scheduler/status'
+const SCHEDULER_TRIGGER_URL = '/api/retrain-scheduler/trigger'
+const SCHEDULER_UPDATE_URL  = '/api/retrain-scheduler/schedule'
+const SCHEDULER_HISTORY_URL = '/api/retrain-scheduler/history'
 
 /* ══════════════════════════════════════════════════════════════════
    Theme / palette
@@ -707,6 +713,351 @@ function ChartsSection() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   Nightly Scheduler Panel
+══════════════════════════════════════════════════════════════════ */
+function SchedulerPanel() {
+  const [sched,       setSched]       = useState(null)
+  const [history,     setHistory]     = useState([])
+  const [loading,     setLoading]     = useState(true)
+  const [triggering,  setTriggering]  = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [error,       setError]       = useState(null)
+  const [editHour,    setEditHour]    = useState('')
+  const [editMinute,  setEditMinute]  = useState('')
+  const [showHistory, setShowHistory] = useState(false)
+  const [trigLog,     setTrigLog]     = useState([])
+  const timerRef = useRef(null)
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const [sRes, hRes] = await Promise.all([
+        fetch(SCHEDULER_STATUS_URL),
+        fetch(`${SCHEDULER_HISTORY_URL}?limit=5`),
+      ])
+      if (sRes.ok) {
+        const d = await sRes.json()
+        setSched(d)
+        setEditHour(String(d.schedule?.hour ?? 2).padStart(2, '0'))
+        setEditMinute(String(d.schedule?.minute ?? 0).padStart(2, '0'))
+      }
+      if (hRes.ok) setHistory((await hRes.json()).history ?? [])
+      setError(null)
+    } catch {
+      setError('Scheduler service unreachable')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchStatus()
+    timerRef.current = setInterval(fetchStatus, 30000)
+    return () => clearInterval(timerRef.current)
+  }, [fetchStatus])
+
+  const toggleEnabled = async () => {
+    if (!sched) return
+    setSaving(true)
+    try {
+      const res = await fetch(SCHEDULER_UPDATE_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !sched.enabled }),
+      })
+      if (res.ok) await fetchStatus()
+    } finally { setSaving(false) }
+  }
+
+  const saveSchedule = async () => {
+    const h = parseInt(editHour, 10)
+    const m = parseInt(editMinute, 10)
+    if (isNaN(h) || h < 0 || h > 23) return
+    if (isNaN(m) || m < 0 || m > 59) return
+    setSaving(true)
+    try {
+      const res = await fetch(SCHEDULER_UPDATE_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hour: h, minute: m }),
+      })
+      if (res.ok) await fetchStatus()
+    } finally { setSaving(false) }
+  }
+
+  const triggerNow = async () => {
+    setTriggering(true)
+    setTrigLog([])
+    try {
+      const res  = await fetch(SCHEDULER_TRIGGER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const data = await res.json()
+      if (res.ok && data.results) {
+        const logs = Object.entries(data.results).map(([mid, r]) =>
+          `${mid}: ${r.status} — ${r.message} (${r.duration_s}s)`
+        )
+        setTrigLog(logs)
+        await fetchStatus()
+      } else {
+        setTrigLog([data.detail || 'Trigger failed'])
+      }
+    } catch {
+      setTrigLog(['Could not reach scheduler service'])
+    } finally { setTriggering(false) }
+  }
+
+  const fmtTime = iso => {
+    if (!iso) return '—'
+    try { return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) }
+    catch { return iso }
+  }
+
+  const scheduleChanged =
+    sched && (
+      parseInt(editHour, 10) !== sched.schedule?.hour ||
+      parseInt(editMinute, 10) !== sched.schedule?.minute
+    )
+
+  const MODEL_META = {
+    voice:   { label: 'Voice',   color: '#8B5CF6' },
+    website: { label: 'Website', color: '#0EA5E9' },
+    email:   { label: 'Email',   color: '#10B981' },
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden mb-6"
+    >
+      {/* Header */}
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-50"
+           style={{ borderTop: '3px solid #0EA5E9' }}>
+        <div className="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
+          <RiCalendarLine className="text-sky-600 text-[20px]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[14px] font-bold text-slate-900">Nightly Auto-Retraining</p>
+          <p className="text-[11px] text-slate-400">
+            Automatically triggers all models at a scheduled time each night
+          </p>
+        </div>
+
+        {/* Enable toggle */}
+        <button
+          onClick={toggleEnabled}
+          disabled={saving || loading}
+          title={sched?.enabled ? 'Disable scheduler' : 'Enable scheduler'}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[12px] font-semibold transition-all"
+          style={sched?.enabled
+            ? { background: '#EFF6FF', color: '#2563EB', borderColor: '#BFDBFE' }
+            : { background: '#F8FAFC', color: '#94A3B8', borderColor: '#E2E8F0' }}
+        >
+          {sched?.enabled
+            ? <RiToggleFill className="text-[18px] text-blue-500" />
+            : <RiToggleLine className="text-[18px]" />}
+          {sched?.enabled ? 'Enabled' : 'Disabled'}
+        </button>
+
+        {/* Trigger Now */}
+        <button
+          onClick={triggerNow}
+          disabled={triggering || loading}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-bold transition-all shadow-sm bg-gradient-to-r from-sky-500 to-blue-600 text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {triggering
+            ? <><RiLoader4Line className="animate-spin text-[14px]" /> Running…</>
+            : <><RiPlayCircleLine className="text-[14px]" /> Run Now</>}
+        </button>
+
+        <button onClick={fetchStatus} className="text-slate-400 hover:text-sky-500 transition-colors p-1">
+          <RiRefreshLine className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      <div className="px-5 py-4">
+        {error && (
+          <div className="mb-4 px-4 py-2.5 rounded-xl bg-red-50 border border-red-100 text-[12px] text-red-600 font-medium flex items-center gap-2">
+            <RiErrorWarningLine /> {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+          {/* Schedule time editor */}
+          <div className="col-span-1 sm:col-span-2 p-4 rounded-xl bg-sky-50/60 border border-sky-100">
+            <p className="text-[11px] font-semibold text-slate-500 mb-3 flex items-center gap-1.5">
+              <RiSettings3Line /> Schedule Time (24-hr, UTC)
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min="0" max="23"
+                value={editHour}
+                onChange={e => setEditHour(e.target.value)}
+                className="w-16 text-center font-mono text-[16px] font-black text-slate-800 bg-white border border-sky-200 rounded-xl px-2 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+              />
+              <span className="text-[18px] font-black text-slate-400">:</span>
+              <input
+                type="number" min="0" max="59"
+                value={editMinute}
+                onChange={e => setEditMinute(e.target.value)}
+                className="w-16 text-center font-mono text-[16px] font-black text-slate-800 bg-white border border-sky-200 rounded-xl px-2 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+              />
+              <span className="text-[12px] font-semibold text-slate-400 ml-1">UTC</span>
+              {scheduleChanged && (
+                <button
+                  onClick={saveSchedule}
+                  disabled={saving}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500 text-white text-[11px] font-bold hover:bg-sky-600 disabled:opacity-50 transition-all"
+                >
+                  {saving ? <RiLoader4Line className="animate-spin" /> : <RiCheckboxCircleLine />}
+                  Save
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2">
+              Cron: <span className="font-mono font-bold">{sched?.schedule?.cron_expression ?? '0 2 * * *'}</span>
+            </p>
+          </div>
+
+          {/* Next run */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+            <p className="text-[11px] font-semibold text-slate-500 mb-1">Next Run</p>
+            <p className="text-[13px] font-black text-slate-800">
+              {loading ? '—' : fmtTime(sched?.next_run)}
+            </p>
+            <p className="text-[10px] text-slate-400 mt-1">
+              {sched?.enabled ? '🟢 Scheduler active' : '⏸ Scheduler paused'}
+            </p>
+          </div>
+
+          {/* Last run */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+            <p className="text-[11px] font-semibold text-slate-500 mb-1">Last Run</p>
+            <p className="text-[13px] font-black text-slate-800">
+              {loading ? '—' : fmtTime(sched?.last_run)}
+            </p>
+            {sched?.last_run_results && Object.keys(sched.last_run_results).length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {Object.entries(sched.last_run_results).map(([mid, r]) => (
+                  <span key={mid}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${
+                      r.status === 'ok' || r.status === 'started'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : r.status === 'skipped'
+                        ? 'bg-slate-50 text-slate-500 border-slate-200'
+                        : 'bg-red-50 text-red-600 border-red-200'
+                    }`}
+                  >
+                    {MODEL_META[mid]?.label ?? mid}: {r.status}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live trigger log */}
+        <AnimatePresence>
+          {trigLog.length > 0 && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden mt-4"
+            >
+              <div className="rounded-xl bg-slate-900 px-4 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wide flex items-center gap-2">
+                    <RiHistoryLine className="text-slate-400" /> Trigger Log
+                  </span>
+                  <button onClick={() => setTrigLog([])} className="text-slate-500 hover:text-slate-300 text-[12px]">✕</button>
+                </div>
+                {trigLog.map((line, i) => (
+                  <motion.p key={i}
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.08 }}
+                    className="text-[11px] font-mono text-emerald-400 flex items-start gap-2"
+                  >
+                    <span className="text-slate-500">›</span> {line}
+                  </motion.p>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* History toggle */}
+        <div className="mt-4">
+          <button
+            onClick={() => setShowHistory(h => !h)}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-sky-500 transition-colors"
+          >
+            <RiHistoryLine />
+            {showHistory ? 'Hide' : 'Show'} run history ({history.length})
+          </button>
+
+          <AnimatePresence>
+            {showHistory && history.length > 0 && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 space-y-2">
+                  {history.map((run, i) => (
+                    <div key={i} className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[11px]">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-semibold text-slate-600 flex items-center gap-1.5">
+                          <RiTimeLine className="text-slate-400" />
+                          {fmtTime(run.run_at)}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          run.triggered_by === 'scheduler'
+                            ? 'bg-sky-50 text-sky-600 border-sky-200'
+                            : 'bg-purple-50 text-purple-600 border-purple-200'
+                        }`}>
+                          {run.triggered_by}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.entries(run.models ?? {}).map(([mid, r]) => (
+                          <span key={mid}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                              r.status === 'ok' || r.status === 'started'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : r.status === 'skipped'
+                                ? 'bg-slate-100 text-slate-500 border-slate-200'
+                                : 'bg-red-50 text-red-600 border-red-200'
+                            }`}
+                          >
+                            {MODEL_META[mid]?.label ?? mid} · {r.status}
+                            {r.queue_size > 0 && ` · ${r.queue_size} samples`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+            {showHistory && history.length === 0 && (
+              <motion.p
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                className="mt-2 text-[11px] text-slate-400"
+              >
+                No run history yet.
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════════
    Main Page
 ══════════════════════════════════════════════════════════════════ */
 export default function ModelRetraining() {
@@ -748,6 +1099,9 @@ export default function ModelRetraining() {
         <StatTile icon={RiPulseLine}         label="Total Errors"    value={totalIncorrect} sub="Queued for retrain"  iconCls="bg-purple-50 text-purple-600" delay={0.2} />
       </div>
 
+      {/* ── Nightly Scheduler Panel ── */}
+      <SchedulerPanel />
+
       {/* ── How it works banner ── */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -762,9 +1116,9 @@ export default function ModelRetraining() {
             <p className="text-[13px] font-bold text-slate-800 mb-1">How Individual Model Retraining Works</p>
             <p className="text-[12px] text-slate-500 leading-relaxed">
               Each model maintains its own correction queue. Analysts submit feedback on incorrect predictions — those are logged as
-              False Positives or False Negatives in the table below. Once a model's queue reaches&nbsp;
-              <strong className="text-sky-700">{MIN_QUEUE} corrections</strong>, the admin can trigger retraining
-              for that specific model independently.
+              False Positives or False Negatives in the table below. The <strong className="text-sky-700">Nightly Scheduler</strong> (above)
+              automatically triggers all models each night, or an admin can trigger any model on-demand once its queue reaches&nbsp;
+              <strong className="text-sky-700">{MIN_QUEUE} corrections</strong>.
             </p>
             <div className="flex flex-wrap gap-4 mt-2.5 text-[11px] text-slate-400">
               <span className="flex items-center gap-1"><RiCheckboxCircleLine className="text-emerald-500 text-[13px]" /> Analyst flags incorrect prediction</span>

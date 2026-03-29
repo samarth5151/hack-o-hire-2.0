@@ -1129,6 +1129,8 @@ function URLDetailCard({ result, index }) {
 }
 
 // ── Main EmailDetail component ─────────────────────────────────────────────────
+const round2 = (n) => Math.round(n * 100) / 100
+
 export default function EmailDetail({ emailId, onBack }) {
   const [email, setEmail]           = useState(null)
   const [analysis, setAnalysis]     = useState(null)
@@ -1207,7 +1209,16 @@ export default function EmailDetail({ emailId, onBack }) {
     try {
       const res = await fetch(`/api/email/emails/${emailId}/analyze`, { method: 'POST' })
       if (res.ok) {
-        setAnalysis(await res.json())
+        const newData = await res.json()
+        // Merge: add url_scan / voice_analysis without overwriting Ollama-derived panels
+        // that were already populated from phishingScores (ai_detection, llm_analysis, credentials)
+        setAnalysis(prev => ({
+          ...(prev || {}),
+          ...newData,
+          ai_detection:  prev?.ai_detection  || newData.ai_detection,
+          llm_analysis:  prev?.llm_analysis  || newData.llm_analysis,
+          credentials:   prev?.credentials   || newData.credentials,
+        }))
       }
     } catch (e) {
       console.warn('Analysis error:', e)
@@ -1220,19 +1231,82 @@ export default function EmailDetail({ emailId, onBack }) {
     fetchEmail()
   }, [fetchEmail])
 
-  // Auto-run analysis on load
-  useEffect(() => {
-    if (email && !analysis && !analyzing) {
-      runAnalysis()
-    }
-  }, [email, analysis, analyzing, runAnalysis])
-
   // Auto-run phishing analysis after email is fetched
   useEffect(() => {
     if (email && !phishingScores && !runningPhishing) {
       runPhishingAnalysis(email)
     }
   }, [email, phishingScores, runningPhishing, runPhishingAnalysis])
+
+  // When phishing analysis completes, merge its Ollama-based results into the
+  // analysis state so AI-Generated, LLM Threat, and Credential panels populate
+  // immediately without waiting for the slower per-email analysis endpoint.
+  useEffect(() => {
+    if (!phishingScores) return
+    setAnalysis(prev => {
+      // Don't overwrite if full analysis already populated these keys
+      if (prev?.ai_detection?.model && prev.ai_detection.model !== 'heuristic-fallback') return prev
+
+      const aiText    = phishingScores.ai_text            || {}
+      const llmThreat = phishingScores.llm_threat_analysis || {}
+      const creds     = phishingScores.credentials         || {}
+
+      const prob = typeof aiText.probability === 'number'
+        ? aiText.probability
+        : (aiText.score || 0) / 100
+
+      return {
+        ...(prev || {}),
+        ai_detection: {
+          ai_generated_probability: round2(prob),
+          is_ai_generated: (aiText.verdict || '') !== 'human-written' && prob >= 0.5,
+          method:    aiText.model     || 'llama3:latest',
+          model:     aiText.model     || 'llama3:latest',
+          indicators: Array.isArray(aiText.ai_indicators) ? aiText.ai_indicators : [],
+          verdict:   aiText.verdict   || '',
+          confidence: aiText.confidence || 0,
+        },
+        llm_analysis: {
+          ollama_available:    !llmThreat.error,
+          threat_type:         llmThreat.threat_type          || 'UNKNOWN',
+          urgency_level:       llmThreat.urgency_level        || 'LOW',
+          urgency_score:       llmThreat.risk_score           || 0,
+          summary:             llmThreat.summary              || '',
+          suspicious_phrases:  Array.isArray(llmThreat.specific_threats)
+                                 ? llmThreat.specific_threats : [],
+          social_engineering_tactics: Array.isArray(llmThreat.social_engineering_tactics)
+                                 ? llmThreat.social_engineering_tactics : [],
+          extracted_entities:  { emails: [], accounts: [], phones: [], names: [] },
+          flags:               Array.isArray(llmThreat.social_engineering_tactics)
+                                 ? llmThreat.social_engineering_tactics : [],
+          overall_risk_score:  llmThreat.risk_score           || 0,
+          recommendation:      phishingScores.recommendation  || 'REVIEW',
+          impersonates:        llmThreat.impersonates         || null,
+          error:               llmThreat.error                || undefined,
+        },
+        credentials: {
+          total_findings:      creds.total_findings           || 0,
+          findings:            creds.findings                 || [],
+          risk_score:          creds.risk_score               || 0,
+          risk_label:          creds.sensitive_data_found
+                                 ? 'Sensitive Data Found'
+                                 : (creds.total_findings > 0 ? 'Findings Detected' : 'Clean'),
+          sensitive_data_found: !!creds.sensitive_data_found,
+          human_summary:       creds.sensitive_data_found
+                                 ? 'Sensitive data detected in email content.'
+                                 : 'No credentials or sensitive data detected in email body',
+        },
+      }
+    })
+  }, [phishingScores])
+
+  // After phishing analysis completes, trigger URL scan (runs sequentially
+  // so Ollama is not overloaded with concurrent requests)
+  useEffect(() => {
+    if (phishingScores && !analysis?.url_scan && !analyzing && email) {
+      runAnalysis()
+    }
+  }, [phishingScores, analysis, analyzing, email, runAnalysis])
 
   if (loading) {
     return (
@@ -1283,6 +1357,13 @@ export default function EmailDetail({ emailId, onBack }) {
             {email.has_attachments && (
               <span className="flex items-center gap-1 text-[11px] text-slate-500">
                 <RiAttachment2 className="text-xs" /> {email.attachment_count} attachment{email.attachment_count !== 1 ? 's' : ''}
+              </span>
+            )}
+            {/* SMTP gateway interception badge */}
+            {(email.email_source === 'SMTP_GATEWAY' || email.analysis?.source === 'SMTP_GATEWAY') && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold rounded-full border bg-violet-50 text-violet-700 border-violet-200">
+                <RiShieldLine className="text-[11px]" />
+                Intercepted at SMTP Layer
               </span>
             )}
           </div>
@@ -2597,8 +2678,173 @@ export default function EmailDetail({ emailId, onBack }) {
               </div>
             </AnalysisSection>
           )}
+
+          {/* ── 7. SMTP Gateway Multi-Layer Analysis ── */}
+          {email?.analysis?.risk_scores && (
+            <AnalysisSection
+              icon={<RiShieldLine />}
+              title="SMTP Gateway — Multi-Layer Analysis"
+              defaultOpen={email.risk_tier === 'CRITICAL' || email.risk_tier === 'HIGH'}
+              badge={
+                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                  email.risk_tier === 'CRITICAL' ? 'bg-red-50 text-red-700 border-red-200'
+                  : email.risk_tier === 'HIGH'   ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : email.risk_tier === 'MEDIUM' ? 'bg-sky-50 text-sky-700 border-sky-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  {email.risk_tier || 'LOW'}
+                </span>
+              }
+            >
+              <div className="space-y-4">
+                {/* Explanation */}
+                {(email.analysis.explanation || email.analysis.ml_summary) && (
+                  <div className="p-3 rounded-xl border border-violet-100 bg-violet-50">
+                    <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wide mb-1">Gateway Threat Explanation</p>
+                    <p className="text-[12px] text-slate-700 leading-relaxed">
+                      {email.analysis.explanation || email.analysis.ml_summary}
+                    </p>
+                  </div>
+                )}
+                {/* Score summary grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { label: 'Combined Score',  value: `${email.analysis.combined_score ?? email.analysis.gateway_score ?? 0}/100` },
+                    { label: 'XGBoost',         value: `${Math.round(email.analysis.risk_scores?.xgboost ?? 0)}/100` },
+                    { label: 'URL Risk',        value: `${Math.round(email.analysis.risk_scores?.url_reputation ?? 0)}/100` },
+                    { label: 'ML Class',        value: email.analysis.ml_classification || '—' },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{label}</p>
+                      <p className="text-[13px] font-bold text-slate-800 mt-0.5 truncate">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                {/* Per-module risk bars */}
+                <div className="space-y-3">
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Risk by Module & Context</p>
+                  {[
+                    { label: 'Credential Exposure', k: 'credential_exposure', c: 'bg-rose-500',   fallback: 'No credentials, API keys, or secrets were detected in this message.' },
+                    { label: 'Homograph / IDN',     k: 'homograph',           c: 'bg-purple-500', fallback: 'No homograph or IDN spoofing detected — all domains use standard ASCII characters.' },
+                    { label: 'URL Suspicion',        k: 'url_suspicion',       c: 'bg-red-500',    fallback: 'No suspicious URLs detected, or no URLs were present in this message.' },
+                    { label: 'Attachment Risk',      k: 'attachment',          c: 'bg-amber-500',  fallback: 'No dangerous attachments detected. All files are low-risk formats.' },
+                    { label: 'BEC Patterns',         k: 'bec',                 c: 'bg-orange-500', fallback: 'No Business Email Compromise patterns found — no wire transfer, payment diversion, or executive impersonation language.' },
+                    { label: '419 Scam Signals',     k: 'scam_419',            c: 'bg-yellow-600', fallback: 'No advance-fee or 419 scam language detected — no references to foreign funds, lottery winnings, or processing fees.' },
+                    { label: 'Language Phishing',    k: 'language_phishing',   c: 'bg-sky-500',    fallback: 'No phishing-characteristic language detected — no urgency pressure or credential-harvesting requests.' },
+                    { label: 'AI Generated Content', k: 'ai_generated',        c: 'bg-violet-500', fallback: 'Message text shows human-like writing characteristics — high sentence variability and natural vocabulary.' },
+                  ].map(({ label, k, c, fallback }, i) => {
+                    const score = Math.round(email.analysis.risk_scores?.[k] ?? 0);
+                    const explanation = email.analysis.factor_explanations?.[k];
+                    const displayText = (explanation && explanation.trim() !== "") ? explanation : fallback;
+                    const borderColor = score >= 60 ? 'border-red-300'
+                      : score >= 30 ? 'border-amber-300'
+                      : 'border-slate-200';
+                    const bgColor = score >= 60 ? 'bg-red-50/40'
+                      : score >= 30 ? 'bg-amber-50/40'
+                      : 'bg-slate-50/60';
+                    return (
+                      <div key={k} className={`p-2.5 rounded-xl border shadow-sm ${borderColor} ${bgColor}`}>
+                        <ScoreBar label={label} value={score} color={c} delay={i * 0.04} />
+                        <p className={`mt-2 text-[11px] leading-relaxed p-2 rounded-lg border-l-2 ${
+                          score > 0
+                            ? 'text-slate-700 bg-white border-amber-300'
+                            : 'text-slate-500 bg-white/60 border-slate-200'
+                        }`}>
+                          {displayText}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Homograph detection */}
+                {email.analysis.homograph_analysis?.has_homoglyphs && (
+                  <div className="p-3 rounded-xl border border-purple-200 bg-purple-50">
+                    <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-1.5">Homograph / IDN Attack Detected</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {email.analysis.homograph_analysis.confusable_chars?.slice(0, 6).map((c, i) => (
+                        <span key={i} className="text-[10px] bg-white border border-purple-200 rounded-full px-2 py-0.5 text-purple-700 font-mono">
+                          {c.char} → {c.looks_like} ({c.name})
+                        </span>
+                      ))}
+                    </div>
+                    {email.analysis.homograph_analysis.affected_domains?.map((d, i) => (
+                      <p key={i} className="text-[10px] font-mono text-purple-800 mt-1">
+                        Fake: {d.original} → Real: {d.deconfused}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {/* Credential exposure */}
+                {(email.analysis.credential_analysis?.credentials?.length > 0 || email.analysis.credential_analysis?.total_findings > 0) && (
+                  <div className="p-3 rounded-xl border border-rose-200 bg-rose-50">
+                    <p className="text-[10px] font-bold text-rose-700 uppercase tracking-wide mb-1.5">
+                      Credential Exposure — {email.analysis.credential_analysis.total_findings ?? email.analysis.credential_analysis.credentials?.length} finding(s)
+                    </p>
+                    <div className="space-y-1">
+                      {(email.analysis.credential_analysis.credentials || []).slice(0, 5).map((c, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px]">
+                          <span className="font-bold text-rose-700 uppercase w-24 flex-shrink-0">{c.type}</span>
+                          <code className="text-slate-700 font-mono break-all flex-1">{c.value}</code>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-rose-100 text-rose-700">{c.severity}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* BEC patterns */}
+                {email.analysis.bec_patterns?.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">BEC Patterns Detected</p>
+                    <div className="flex flex-wrap gap-1">
+                      {email.analysis.bec_patterns.map((b, i) => (
+                        <IndicatorChip key={i} text={b.pattern || String(b)} level="danger" />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Attachment risk */}
+                {email.analysis.attachment_analysis?.has_attachments && (
+                  <div className="p-3 rounded-xl border border-amber-200 bg-amber-50">
+                    <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-1.5">
+                      Attachment Risk — {Math.round((email.analysis.attachment_analysis?.risk_score || 0) * 100)}/100
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {(email.analysis.attachment_analysis?.attachments || []).slice(0, 5).map((a, i) => (
+                        <span key={i} className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                          a.tier === 'CRITICAL' ? 'bg-red-50 border-red-200 text-red-700'
+                          : a.tier === 'HIGH'   ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}>
+                          {a.filename} [{a.tier}]
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Gateway AI detection */}
+                {(email.analysis.ai_detection?.ai_probability ?? 0) > 0 && (
+                  <div className="p-3 rounded-xl border border-violet-100 bg-slate-50">
+                    <p className="text-[10px] font-bold text-violet-700 uppercase tracking-wide mb-1">AI Content Detection (Statistical)</p>
+                    <ScoreBar
+                      label="AI Probability"
+                      value={Math.round((email.analysis.ai_detection.ai_probability || 0) * 100)}
+                      color={(email.analysis.ai_detection.ai_probability || 0) > 0.5 ? 'bg-violet-500' : 'bg-emerald-500'}
+                    />
+                    {email.analysis.ai_detection.indicators?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {email.analysis.ai_detection.indicators.map((ind, i) => (
+                          <IndicatorChip key={i} text={ind} level="info" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </AnalysisSection>
+          )}
         </div>
       </div>
     </PageWrapper>
   )
 }
+

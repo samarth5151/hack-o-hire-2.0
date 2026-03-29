@@ -45,7 +45,7 @@ DOC_CLASS_SCORE_MAP = {
 
 # Ollama config — used for background audit only, not blocking
 OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-OLLAMA_MODEL    = os.getenv("DOC_CLASSIFIER_MODEL", "mistral:7b-instruct-q4_K_M")
+OLLAMA_MODEL    = os.getenv("DOC_CLASSIFIER_MODEL", "llama3")
 OLLAMA_TIMEOUT  = float(os.getenv("DOC_CLASSIFIER_TIMEOUT_S", "30"))
 
 LLM_DESTINATIONS = [

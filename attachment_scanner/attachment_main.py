@@ -1,6 +1,10 @@
 # Attachment Scanner — Main Entry Point
 # Rule-based malicious attachment detection with 4-phase structured output
 
+import time
+import uuid
+from datetime import datetime, timezone
+
 from magic_detector import detect
 from pdf_analyzer import analyze as analyze_pdf
 from office_analyzer import analyze as analyze_office
@@ -8,6 +12,9 @@ from pe_analyzer import analyze as analyze_pe
 from zip_analyzer import analyze as analyze_zip
 from pattern_engine import scan as scan_patterns
 from hash_checker import check as check_hash
+from html_analyzer import analyze as analyze_html
+from image_analyzer import analyze as analyze_image
+from credential_scanner import scan as scan_credentials
 
 # Analyzers that are active per file type
 PDF_EXTENSIONS   = {".pdf"}
@@ -16,6 +23,8 @@ OFFICE_EXTENSIONS = {
     ".docx", ".xlsx", ".pptx",
     ".docm", ".xlsm", ".pptm",
 }
+HTML_EXTENSIONS  = {".htm", ".html", ".xhtml", ".shtml", ".svg"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".ico"}
 
 # Risk tier ordering for comparisons
 TIER_ORDER = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0}
@@ -32,6 +41,23 @@ def _tier_to_status(tier: str) -> str:
         "Clean":    "clean",
     }
     return mapping.get(tier, "clean")
+
+
+def _parse_error_finding(analyzer_name: str, exc: Exception) -> dict:
+    """
+    Produce a graceful Info-level finding when an analyzer fails.
+    Ensures malformed/corrupt files never crash the pipeline.
+    """
+    return {
+        "stage":       analyzer_name,
+        "rule":        "parse_error",
+        "description": f"{analyzer_name} encountered a parse error: {type(exc).__name__}",
+        "detail":      str(exc)[:200],
+        "risk_tier":   "Info",
+        "category":    "scanner_error",
+        "context":     "",
+        "why_flagged": "The file may be malformed or corrupt — partial analysis completed",
+    }
 
 
 def _findings_status(findings: list) -> str:
@@ -53,6 +79,40 @@ def _group_by_stage(findings: list) -> dict:
         stage = f.get("stage", "Unknown")
         groups.setdefault(stage, []).append(f)
     return groups
+
+
+def _fp_guard(score: int, all_findings: list, file_type: dict) -> int:
+    """
+    Dampen false positives for benign file types with low-signal findings.
+    Called as the final step in score calculation.
+    """
+    mime = file_type.get("mime_type", "")
+    is_benign_type = (
+        mime.startswith("image/") or
+        mime in ("text/html", "application/xhtml+xml", "text/plain")
+    )
+    severities = {f.get("risk_tier", "Low") for f in all_findings}
+    stages     = {f.get("stage", "") for f in all_findings}
+    has_mismatch = file_type.get("extension_mismatch", False)
+
+    if has_mismatch:
+        # Never dampen evasion — mismatch is always intentional
+        return score
+
+    # Benign type + only Low/Info findings → cap at 25 (Low verdict max)
+    if is_benign_type and severities <= {"Low", "Info"}:
+        return min(score, 25)
+
+    # YARA-only match with no Critical findings → dampen by 30%
+    # (YARA community rules have many low-fidelity generic signatures)
+    if stages <= {"YARA Pattern Engine", "YARA-style Pattern Engine"} and "Critical" not in severities:
+        return int(score * 0.70)
+
+    # Single Low-tier finding on a benign MIME → Info, not Low
+    if is_benign_type and len(all_findings) == 1 and severities == {"Low"}:
+        return min(score, 5)
+
+    return score
 
 
 def calculate_final_risk(
@@ -105,7 +165,17 @@ def calculate_final_risk(
             pts = int(pts * 1.4)
         score += pts
 
+    # Credential exposure bonus — adds urgency even if file type is benign
+    cred_findings = [f for f in all_findings if f.get("stage") == "Credential Exposure Scanner"]
+    cred_types    = {f.get("rule") for f in cred_findings}
+    cred_bonus    = min(len(cred_types) * 20, 60)  # +20 per credential type, max +60
+    score        += cred_bonus
+
     score = min(score, 100)
+
+    # Apply false-positive guard before finalizing
+    score = _fp_guard(score, all_findings, file_type)
+    score = min(max(score, 0), 100)
 
     # Assign final label
     if score >= 80:
@@ -123,6 +193,7 @@ def calculate_final_risk(
 
 
 def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
+    start_time = time.time()
 
     ext = (
         "." + filename.lower().rsplit(".", 1)[-1]
@@ -142,6 +213,7 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
             "risk_tier":   "Critical",
             "category":    "evasion",
             "context":     "",
+            "why_flagged": "Extension mismatch is a deliberate evasion technique — the file pretends to be one type while containing another, bypassing filters that rely on extension alone",
         })
 
     # ── Phase 2: Deep Content Analysis ────────────────────────────────────────
@@ -152,9 +224,23 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
     is_office = ext in OFFICE_EXTENSIONS
     is_pe     = file_bytes[:2] == b"\x4d\x5a"
     is_zip    = file_bytes[:4] == b"\x50\x4b\x03\x04"
+    is_html   = (
+        ext in HTML_EXTENSIONS or
+        file_type.get("mime_type", "").startswith("text/html") or
+        file_type.get("mime_type") == "application/xhtml+xml" or
+        file_bytes[:9].lower() in (b"<!doctype", b"<html>   ") or
+        file_bytes[:5].lower() in (b"<html", b"<?xml")
+    )
+    is_image  = (
+        ext in IMAGE_EXTENSIONS or
+        (file_type.get("mime_type", "").startswith("image/") and not is_pe)
+    )
 
     if is_pdf:
-        pdf_findings = analyze_pdf(file_bytes)
+        try:
+            pdf_findings = analyze_pdf(file_bytes)
+        except Exception as e:
+            pdf_findings = [_parse_error_finding("PDF Stream Analyzer", e)]
         analyzers_run.append({
             "name":            "PDF Stream Analyzer",
             "status":          _findings_status(pdf_findings),
@@ -165,7 +251,10 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
         deep_findings += pdf_findings
 
     if is_office:
-        office_findings = analyze_office(file_bytes, filename)
+        try:
+            office_findings = analyze_office(file_bytes, filename)
+        except Exception as e:
+            office_findings = [_parse_error_finding("Office Macro Extractor", e)]
         analyzers_run.append({
             "name":            "Office Macro Extractor",
             "status":          _findings_status(office_findings),
@@ -176,7 +265,10 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
         deep_findings += office_findings
 
     if is_pe:
-        pe_findings = analyze_pe(file_bytes)
+        try:
+            pe_findings = analyze_pe(file_bytes)
+        except Exception as e:
+            pe_findings = [_parse_error_finding("PE Header Analyzer", e)]
         analyzers_run.append({
             "name":            "PE Header Analyzer",
             "status":          _findings_status(pe_findings),
@@ -187,18 +279,65 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
         deep_findings += pe_findings
 
     if is_zip:
-        zip_findings = analyze_zip(file_bytes)
+        try:
+            zip_findings = analyze_zip(file_bytes)
+        except Exception as e:
+            zip_findings = [_parse_error_finding("ZIP/Archive Analyzer", e)]
+
+        # Split into structural vs deep-scan findings for better UI grouping
+        structural = [f for f in zip_findings if f.get("stage") != "ZIP Deep Scan"]
+        deep_scan  = [f for f in zip_findings if f.get("stage") == "ZIP Deep Scan"]
+
         analyzers_run.append({
             "name":            "ZIP/Archive Analyzer",
-            "status":          _findings_status(zip_findings),
-            "findings_count":  len(zip_findings),
-            "findings":        zip_findings,
-            "description":     "Inspects archive entries for executable payloads, path traversal, and suspicious file names",
+            "status":          _findings_status(structural),
+            "findings_count":  len(structural),
+            "findings":        structural,
+            "description":     "Inspects archive structure, filenames, and content signatures for bombs, path traversal, and executables",
         })
+        if deep_scan:
+            analyzers_run.append({
+                "name":            "ZIP Deep Scan",
+                "status":          _findings_status(deep_scan),
+                "findings_count":  len(deep_scan),
+                "findings":        deep_scan,
+                "description":     "Recursively extracts inner files and runs HTML, image, PDF, Office, and credential analyzers on each",
+            })
         deep_findings += zip_findings
 
+    if is_html:
+        try:
+            html_findings = analyze_html(file_bytes)
+        except Exception as e:
+            html_findings = [_parse_error_finding("HTML Analyzer", e)]
+        analyzers_run.append({
+            "name":            "HTML Analyzer",
+            "status":          _findings_status(html_findings),
+            "findings_count":  len(html_findings),
+            "findings":        html_findings,
+            "description":     "5-layer HTML analysis: script tags, obfuscated JS (eval/atob/fromCharCode), credential-harvesting forms, hidden iframes, meta-refresh redirects",
+        })
+        deep_findings += html_findings
+
+    if is_image:
+        try:
+            image_findings = analyze_image(file_bytes, filename)
+        except Exception as e:
+            image_findings = [_parse_error_finding("Image Analyzer", e)]
+        analyzers_run.append({
+            "name":            "Image Analyzer",
+            "status":          _findings_status(image_findings),
+            "findings_count":  len(image_findings),
+            "findings":        image_findings,
+            "description":     "4-layer image analysis: EXIF metadata (GPS, suspicious software), pixel entropy (steganography), QR code decode, metadata anomalies",
+        })
+        deep_findings += image_findings
+
     # YARA / pattern engine always runs
-    pattern_findings = scan_patterns(file_bytes)
+    try:
+        pattern_findings = scan_patterns(file_bytes)
+    except Exception as e:
+        pattern_findings = [_parse_error_finding("YARA Pattern Engine", e)]
     analyzers_run.append({
         "name":            "YARA Pattern Engine",
         "status":          _findings_status(pattern_findings),
@@ -207,6 +346,21 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
         "description":     "Matches against YARA community rules (1900+ signatures) covering ransomware, shellcode, LOLBins, macros and more",
     })
     deep_findings += pattern_findings
+
+    # Credential exposure scanner — universal, runs on ALL file types
+    try:
+        cred_findings = scan_credentials(file_bytes)
+    except Exception as e:
+        cred_findings = [_parse_error_finding("Credential Exposure Scanner", e)]
+    if cred_findings:
+        analyzers_run.append({
+            "name":            "Credential Exposure Scanner",
+            "status":          _findings_status(cred_findings),
+            "findings_count":  len(cred_findings),
+            "findings":        cred_findings,
+            "description":     "Universal cross-file credential scan: API keys, tokens, private keys, email:password pairs, connection strings",
+        })
+        deep_findings += cred_findings
 
     # Combine all findings (phase 1 evasion + deep analysis)
     all_findings = phase1_findings + deep_findings
@@ -306,6 +460,9 @@ def analyze_attachment(file_bytes: bytes, filename: str) -> dict:
         "risk_label":         risk["label"],
         "human_summary":      human_summary,
         "recommended_action": recommended_action,
+        "analysis_time_ms":   round((time.time() - start_time) * 1000, 1),
+        "scan_id":            str(uuid.uuid4()),
+        "scanned_at":         datetime.now(timezone.utc).isoformat(),
     }
 
 
