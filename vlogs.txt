@@ -1,0 +1,220 @@
+﻿voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...
+voice-scanner-1  | INFO:     Started server process [1]
+voice-scanner-1  | INFO:     Waiting for application startup.
+voice-scanner-1  | ERROR:    Traceback (most recent call last):
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/starlette/routing.py", line 638, in lifespan
+voice-scanner-1  |     async with self.lifespan_context(app) as maybe_state:
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 241, in __aenter__
+voice-scanner-1  |     await self._router._startup()
+voice-scanner-1  |   File "/usr/local/lib/python3.10/site-packages/fastapi/routing.py", line 4884, in _startup
+voice-scanner-1  |     await handler()
+voice-scanner-1  |   File "/app/src/api.py", line 42, in startup
+voice-scanner-1  |     app.state.deep, app.state.rf = load_models()
+voice-scanner-1  |   File "/app/src/evaluate.py", line 45, in load_models
+voice-scanner-1  |     rf = load_rf()
+voice-scanner-1  |   File "/app/src/explainer.py", line 93, in load_rf
+voice-scanner-1  |     with open(MODELS_DIR / "rf_model.pkl", "rb") as f:
+voice-scanner-1  | FileNotFoundError: [Errno 2] No such file or directory: '/app/models/saved/rf_model.pkl'
+voice-scanner-1  | 
+voice-scanner-1  | ERROR:    Application startup failed. Exiting.
+voice-scanner-1  | [config] device = cpu
+voice-scanner-1  | Loading models...

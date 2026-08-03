@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Models
+models/
+*.bin
+*.pt
+*.json
+*.safetensors
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.logsandbox/uploads/*.gguf
+sandbox/uploads/*.bin
+
+*.yar
