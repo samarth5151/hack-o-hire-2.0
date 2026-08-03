@@ -18,4 +18,5 @@ Thumbs.db
 *.logsandbox/uploads/*.gguf
 sandbox/uploads/*.bin
 
-*.yar
+*
+.yar
