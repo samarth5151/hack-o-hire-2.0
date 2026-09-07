@@ -208,8 +208,9 @@ services:
       IMAP_PASSWORD: "pqme owui xthk ggnp"
       IMAP_MAILBOX: "INBOX"
       MAILHOG_URL: "http://mailhog:8025"
-      POLL_INTERVAL: "10"
+      POLL_INTERVAL: "5"
       OLLAMA_HOST: "http://sandbox-ollama:11434"
+      ANALYSIS_TIMEOUT_SECONDS: "400"
     depends_on:
       postgres:
         condition: service_healthy

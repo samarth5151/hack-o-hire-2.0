@@ -14,10 +14,11 @@ import time
 from pathlib import Path
 from typing import Optional, List
 
+import asyncio
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 # ── Path setup so src/ modules are importable ──────────────────────────────────
@@ -30,9 +31,9 @@ from email_db import (
     update_email_analysis, update_attachment_analysis,
     mark_read, toggle_flag, get_stats,
     save_email_feedback, get_feedback_stats, mark_email_retraining_used,
-    save_email,
+    save_email, update_email_status
 )
-from imap_worker import start_worker
+from imap_worker import start_worker, SSE_EVENT_QUEUE
 
 app = FastAPI(title="Email Monitor API", version="1.0.0")
 
@@ -47,8 +48,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_db()
-    # start_worker() # Disabled: we now rely completely on direct SMTP proxy pushes
-    print("[EmailAPI] Ready — IMAP worker disabled (relying on direct SMTP integration)")
+    start_worker()  # Enable IMAP worker — polls Gmail and triggers analysis
+    print("[EmailAPI] Ready — IMAP worker started, SSE /events endpoint active")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -56,6 +57,51 @@ async def startup():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "email-monitor"}
+
+
+# ── Server-Sent Events ────────────────────────────────────────────────────────────────
+
+@app.get("/events")
+@app.get("/api/emails/events")
+async def event_stream():
+    """
+    Server-Sent Events stream.  The frontend subscribes to this endpoint
+    to receive real-time notifications when emails transition from
+    PROCESSING → COMPLETED / FAILED.
+
+    Event format (data field is JSON-encoded):
+      data: {"type": "email_processing", "email_id": 42, "status": "PROCESSING", ...}
+      data: {"type": "email_completed",  "email_id": 42, "verdict": "SPAM", ...}
+      data: {"type": "email_failed",     "email_id": 42, "error": "..."}
+      data: {"type": "heartbeat"}
+    """
+    async def _generator():
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                # Non-blocking check of the thread-safe queue
+                try:
+                    event = SSE_EVENT_QUEUE.get_nowait()
+                    yield f"data: {json.dumps(event)}\n\n"
+                except Exception:
+                    # Queue empty — send heartbeat to keep connection alive
+                    yield "data: {\"type\": \"heartbeat\"}\n\n"
+                    await asyncio.sleep(5)
+                    continue
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                await asyncio.sleep(1)
+
+    return StreamingResponse(
+        _generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":  "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection":     "keep-alive",
+        },
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -134,7 +180,7 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
     Returns all scores + overall composite score.
     """
     import time
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
     t0      = time.time()
     body    = payload.body
@@ -327,14 +373,21 @@ def analyze_phishing_full(payload: PhishingAnalysisRequest):
         "credentials":   _run_credentials,
     }
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(fn): key for key, fn in task_map.items()}
-        for future in as_completed(futures):
+        # Wait for all tasks to complete or timeout after 120 seconds
+        done, not_done = wait(futures.keys(), timeout=120)
+        
+        for future in done:
             key = futures[future]
             try:
-                results[key] = future.result(timeout=60)
+                results[key] = future.result()
             except Exception as e:
                 results[key] = {"error": str(e)}
+                
+        for future in not_done:
+            key = futures[future]
+            results[key] = {"error": "Timeout exceeded (120s) waiting for module"}
 
     # ── Compute overall score ────────────────────────────────────────────────
     bert_score   = float(results.get("distilbert",  {}).get("score",       0))
@@ -435,7 +488,9 @@ def analyze_email_full_pipeline(payload: EmailThreatRequest):
 # ── Email list ────────────────────────────────────────────────────────────────
 
 @app.get("/emails")
+@app.get("/api/emails")
 def list_emails(
+    folder:       Optional[str] = Query(None, description="Folder filter: 'inbox' or 'spam'"),
     limit:        int  = Query(50,  ge=1, le=200),
     offset:       int  = Query(0,   ge=0),
     risk_filter:  str  = Query("ALL"),
@@ -443,8 +498,14 @@ def list_emails(
     unread_only:  bool = Query(False),
     flagged_only: bool = Query(False),
 ):
+    """
+    Returns list of emails matching the query.
+      - folder=inbox: Returns finalized 'INBOX' items plus any items currently 'PROCESSING'
+      - folder=spam:  Returns finalized 'SPAM' items only
+    """
     rows, total = get_emails(
         limit=limit, offset=offset,
+        folder=folder,
         risk_filter=risk_filter,
         search=search,
         unread_only=unread_only,
@@ -453,18 +514,25 @@ def list_emails(
     for r in rows:
         if r.get("received_at"):
             r["received_at"] = r["received_at"].isoformat()
-    return {"emails": rows, "total": total, "limit": limit, "offset": offset}
+    return {"emails": rows, "total": total, "limit": limit, "offset": offset, "folder": folder}
 
 
 @app.get("/stats")
+@app.get("/api/stats")
 def email_stats():
     return get_stats()
 
 
-# ── Single email ──────────────────────────────────────────────────────────────
+# ── Single email (ZERO Dynamic Re-Analysis: Pre-computed DB Read Only) ────────
 
 @app.get("/emails/{email_id}")
+@app.get("/api/emails/{email_id}")
 def get_email_detail(email_id: int):
+    """
+    Reads the stored email body, headers, attachments, and the complete
+    persisted analysis payload directly from the database row.
+    Zero heuristics, zero NLP, zero models are re-run on read requests.
+    """
     row = get_email(email_id)
     if not row:
         raise HTTPException(404, "Email not found")
@@ -482,9 +550,63 @@ def get_email_detail(email_id: int):
 
 
 @app.post("/emails/{email_id}/flag")
+@app.post("/api/emails/{email_id}/flag")
 def flag_email(email_id: int):
     new_state = toggle_flag(email_id)
     return {"email_id": email_id, "is_flagged": new_state}
+
+
+@app.post("/emails/{email_id}/store-analysis")
+async def store_analysis(email_id: int, request: Request):
+    """Stores full analysis results generated manually via UI Re-run."""
+    try:
+        data = await request.json()
+        score = float(
+            data.get("overall_score") or
+            data.get("composite_score") or
+            data.get("overall_risk_score") or 0
+        )
+        if score <= 1.0:
+            score *= 100
+            
+        if score >= 70:
+            risk_tier = "HIGH"
+        elif score >= 40:
+            risk_tier = "MEDIUM"
+        else:
+            risk_tier = "LOW"
+            
+        verdict = "SPAM" if risk_tier in ("CRITICAL", "HIGH") else "INBOX"
+
+        normalized = {
+            "source":              "UI_MANUAL_RERUN",
+            "overall_score":       round(score, 1),
+            "overall_risk_score":  round(score, 1),
+            "overall_risk_tier":   risk_tier,
+            "risk_level":          data.get("risk_level", risk_tier),
+            "risk_emoji":          data.get("risk_emoji", ""),
+            "recommendation":      data.get("recommendation", "REVIEW"),
+            "processing_ms":       data.get("processing_ms", 0),
+            "distilbert":          data.get("distilbert", {}),
+            "roberta_ml":          data.get("roberta_ml", {}),
+            "rule_based":          data.get("rule_based", {}),
+            "ai_text":             data.get("ai_text", {}),
+            "header_analysis":     data.get("header_analysis", {}),
+            "llm_threat_analysis": data.get("llm_threat_analysis", {}),
+            "credentials":         data.get("credentials", {}),
+        }
+
+        update_email_status(
+            email_id=email_id,
+            status="COMPLETED",
+            verdict=verdict,
+            risk_score=int(round(score)),
+            risk_tier=risk_tier,
+            analysis=normalized,
+        )
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 # ── Attachment download ────────────────────────────────────────────────────────

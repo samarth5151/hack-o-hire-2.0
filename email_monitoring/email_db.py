@@ -53,13 +53,24 @@ CREATE TABLE IF NOT EXISTS email_inbox (
     urls            JSONB    DEFAULT '[]'::jsonb,
     has_attachments BOOLEAN  DEFAULT FALSE,
     attachment_count INT     DEFAULT 0,
-    is_read         BOOLEAN  DEFAULT FALSE,
-    is_flagged      BOOLEAN  DEFAULT FALSE,
-    risk_score      INT      DEFAULT 0,
-    risk_tier       TEXT     DEFAULT 'UNKNOWN',
-    analysis        JSONB    DEFAULT NULL,
-    received_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    is_read            BOOLEAN  DEFAULT FALSE,
+    is_flagged         BOOLEAN  DEFAULT FALSE,
+    risk_score         INT      DEFAULT 0,
+    risk_tier          TEXT     DEFAULT 'UNKNOWN',
+    analysis           JSONB    DEFAULT NULL,
+    processing_status  TEXT     DEFAULT 'PROCESSING',
+    verdict            TEXT     DEFAULT NULL,
+    folder             TEXT     DEFAULT 'inbox',
+    received_at        TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migrate existing rows that have already been scored
+ALTER TABLE email_inbox ADD COLUMN IF NOT EXISTS processing_status TEXT DEFAULT 'PROCESSING';
+ALTER TABLE email_inbox ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT NULL;
+ALTER TABLE email_inbox ADD COLUMN IF NOT EXISTS folder TEXT DEFAULT 'inbox';
+UPDATE email_inbox SET processing_status = 'COMPLETED' WHERE processing_status = 'PROCESSING' AND risk_tier != 'UNKNOWN';
+UPDATE email_inbox SET verdict = CASE WHEN risk_tier IN ('CRITICAL','HIGH') THEN 'SPAM' ELSE 'INBOX' END WHERE processing_status = 'COMPLETED' AND verdict IS NULL;
+UPDATE email_inbox SET folder = CASE WHEN verdict = 'SPAM' OR risk_tier IN ('CRITICAL','HIGH') THEN 'spam' ELSE 'inbox' END WHERE folder IS NULL;
 
 CREATE TABLE IF NOT EXISTS email_attachments (
     id              SERIAL PRIMARY KEY,
@@ -96,12 +107,15 @@ CREATE TABLE IF NOT EXISTS email_retraining (
     used_in_run     BOOLEAN DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS idx_email_received  ON email_inbox(received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_email_sender    ON email_inbox(sender);
-CREATE INDEX IF NOT EXISTS idx_email_risk      ON email_inbox(risk_tier);
-CREATE INDEX IF NOT EXISTS idx_att_email_id    ON email_attachments(email_id);
-CREATE INDEX IF NOT EXISTS idx_efeedback_email ON email_feedback(email_id);
-CREATE INDEX IF NOT EXISTS idx_eretrain_used   ON email_retraining(used_in_run);
+CREATE INDEX IF NOT EXISTS idx_email_received      ON email_inbox(received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_email_sender        ON email_inbox(sender);
+CREATE INDEX IF NOT EXISTS idx_email_risk          ON email_inbox(risk_tier);
+CREATE INDEX IF NOT EXISTS idx_email_folder_status ON email_inbox(folder, processing_status);
+CREATE INDEX IF NOT EXISTS idx_email_status        ON email_inbox(processing_status);
+CREATE INDEX IF NOT EXISTS idx_email_message_id    ON email_inbox(message_id);
+CREATE INDEX IF NOT EXISTS idx_att_email_id        ON email_attachments(email_id);
+CREATE INDEX IF NOT EXISTS idx_efeedback_email     ON email_feedback(email_id);
+CREATE INDEX IF NOT EXISTS idx_eretrain_used       ON email_retraining(used_in_run);
 """
 
 
@@ -130,7 +144,7 @@ def init_db() -> bool:
 # ── Write ─────────────────────────────────────────────────────────────────────
 
 def save_email(data: dict) -> dict | None:
-    """Insert a parsed email into email_inbox. Returns saved row or None."""
+    """Insert a parsed email into email_inbox immediately with 'PROCESSING' state."""
     p = _get_pool()
     if p is None:
         return None
@@ -142,27 +156,32 @@ def save_email(data: dict) -> dict | None:
                 INSERT INTO email_inbox
                     (message_id, subject, sender, receiver, reply_to, date_str,
                      headers, body_text, body_html, urls,
-                     has_attachments, attachment_count)
+                     has_attachments, attachment_count, processing_status, folder, verdict)
                 VALUES
                     (%(message_id)s, %(subject)s, %(sender)s, %(receiver)s,
                      %(reply_to)s, %(date_str)s,
                      %(headers)s::jsonb, %(body_text)s, %(body_html)s,
-                     %(urls)s::jsonb, %(has_attachments)s, %(attachment_count)s)
-                ON CONFLICT (message_id) DO NOTHING
-                RETURNING id, received_at
+                     %(urls)s::jsonb, %(has_attachments)s, %(attachment_count)s,
+                     %(processing_status)s, %(folder)s, %(verdict)s)
+                ON CONFLICT (message_id) DO UPDATE
+                    SET processing_status = EXCLUDED.processing_status
+                RETURNING id, received_at, processing_status, folder
             """, {
-                "message_id":      data.get("message_id", ""),
-                "subject":         data.get("subject", "(no subject)"),
-                "sender":          data.get("sender", ""),
-                "receiver":        data.get("receiver", ""),
-                "reply_to":        data.get("reply_to", ""),
-                "date_str":        data.get("date_str", ""),
-                "headers":         json.dumps(data.get("headers", {})),
-                "body_text":       data.get("body_text", ""),
-                "body_html":       data.get("body_html", ""),
-                "urls":            json.dumps(data.get("urls", [])),
-                "has_attachments": data.get("has_attachments", False),
-                "attachment_count":data.get("attachment_count", 0),
+                "message_id":        data.get("message_id", ""),
+                "subject":           data.get("subject", "(no subject)"),
+                "sender":            data.get("sender", ""),
+                "receiver":          data.get("receiver", ""),
+                "reply_to":          data.get("reply_to", ""),
+                "date_str":          data.get("date_str", ""),
+                "headers":           json.dumps(data.get("headers", {})),
+                "body_text":         data.get("body_text", ""),
+                "body_html":         data.get("body_html", ""),
+                "urls":              json.dumps(data.get("urls", [])),
+                "has_attachments":   data.get("has_attachments", False),
+                "attachment_count":  data.get("attachment_count", 0),
+                "processing_status": data.get("processing_status", "PROCESSING"),
+                "folder":            data.get("folder", "inbox"),
+                "verdict":           data.get("verdict", None),
             })
             row = cur.fetchone()
         conn.commit()
@@ -233,6 +252,60 @@ def update_email_analysis(email_id: int, analysis: dict, risk_score: int, risk_t
             p.putconn(conn)
 
 
+def update_email_status(email_id: int, status: str, verdict: str = None,
+                        risk_score: int = None, risk_tier: str = None,
+                        analysis: dict = None, folder: str = None) -> bool:
+    """Transition an email's processing_status and optionally update analysis data.
+    status: 'PROCESSING' | 'COMPLETED' | 'FAILED'
+    verdict: 'INBOX' | 'SPAM' | None
+    folder: 'inbox' | 'spam' | None
+    """
+    p = _get_pool()
+    if p is None:
+        return False
+    conn = None
+    try:
+        conn = p.getconn()
+        with conn.cursor() as cur:
+            fields = ["processing_status = %s"]
+            values = [status]
+            if verdict is not None:
+                fields.append("verdict = %s")
+                values.append(verdict)
+                target_folder = folder or ("spam" if verdict == "SPAM" else "inbox")
+                fields.append("folder = %s")
+                values.append(target_folder)
+            elif folder is not None:
+                fields.append("folder = %s")
+                values.append(folder)
+            if risk_score is not None:
+                fields.append("risk_score = %s")
+                values.append(risk_score)
+            if risk_tier is not None:
+                fields.append("risk_tier = %s")
+                fields.append("is_flagged = %s")
+                values.append(risk_tier)
+                values.append(risk_tier in ('HIGH', 'CRITICAL'))
+            if analysis is not None:
+                fields.append("analysis = %s::jsonb")
+                values.append(json.dumps(analysis))
+            values.append(email_id)
+            cur.execute(
+                f"UPDATE email_inbox SET {', '.join(fields)} WHERE id = %s",
+                values
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[EmailDB] update_email_status error: {e}")
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn and p:
+            p.putconn(conn)
+
+
 def update_attachment_analysis(att_id: int, analysis: dict):
     p = _get_pool()
     if p is None:
@@ -290,7 +363,7 @@ def toggle_flag(email_id: int) -> bool:
 
 # ── Read ──────────────────────────────────────────────────────────────────────
 
-def get_emails(limit=50, offset=0, risk_filter=None, search=None,
+def get_emails(limit=50, offset=0, folder=None, risk_filter=None, search=None,
                unread_only=False, flagged_only=False) -> list:
     p = _get_pool()
     if p is None:
@@ -300,6 +373,15 @@ def get_emails(limit=50, offset=0, risk_filter=None, search=None,
         conn = p.getconn()
         conditions = []
         params = []
+
+        # Folder-based filtering (Inbox includes completed inbox + all in-flight processing; Spam includes completed spam only)
+        if folder:
+            f = folder.strip().lower()
+            if f == 'inbox':
+                conditions.append("((folder = 'inbox' AND processing_status = 'COMPLETED') OR processing_status = 'PROCESSING')")
+            elif f == 'spam':
+                conditions.append("((folder = 'spam' OR verdict = 'SPAM') AND processing_status = 'COMPLETED')")
+
         # risk_filter may be a single tier OR comma-separated list (e.g. "LOW,MEDIUM")
         if risk_filter and risk_filter != "ALL":
             tiers = [t.strip().upper() for t in risk_filter.split(',') if t.strip()]
@@ -327,6 +409,7 @@ def get_emails(limit=50, offset=0, risk_filter=None, search=None,
                 SELECT id, message_id, subject, sender, receiver, date_str,
                        has_attachments, attachment_count, is_read, is_flagged,
                        risk_score, risk_tier, received_at,
+                       processing_status, verdict, folder,
                        COALESCE(analysis->>'source', 'IMAP') AS email_source,
                        analysis->>'threat_type'    AS threat_type,
                        analysis->>'combined_score' AS gateway_score,
@@ -441,7 +524,10 @@ def get_stats() -> dict:
                     COUNT(*) FILTER (WHERE risk_tier = 'HIGH')                 AS high,
                     COUNT(*) FILTER (WHERE risk_tier = 'MEDIUM')               AS medium,
                     COUNT(*) FILTER (WHERE risk_tier = 'LOW')                  AS low,
-                    COUNT(*) FILTER (WHERE risk_tier = 'UNKNOWN')              AS unknown_tier
+                    COUNT(*) FILTER (WHERE risk_tier = 'UNKNOWN')              AS unknown_tier,
+                    COUNT(*) FILTER (WHERE processing_status = 'PROCESSING')   AS processing,
+                    COUNT(*) FILTER (WHERE verdict = 'SPAM')                   AS spam,
+                    COUNT(*) FILTER (WHERE verdict = 'INBOX')                  AS inbox_count
                 FROM email_inbox
             """)
             return dict(cur.fetchone())

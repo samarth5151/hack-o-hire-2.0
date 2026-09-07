@@ -1142,6 +1142,7 @@ export default function EmailDetail({ emailId, onBack }) {
   const [phishingScores, setPhishingScores] = useState(null)
   const [runningPhishing, setRunningPhishing] = useState(false)
 
+  // ── Manual re-run (user-triggered only) ─────────────────────────────────────────────
   const runPhishingAnalysis = useCallback(async (emailData) => {
     if (!emailData) return
     setRunningPhishing(true)
@@ -1159,14 +1160,21 @@ export default function EmailDetail({ emailId, onBack }) {
         }),
       })
       if (res.ok) {
-        setPhishingScores(await res.json())
+        const data = await res.json()
+        setPhishingScores(data)
+        // Also persist to DB so future opens skip re-running
+        await fetch(`/api/email/emails/${emailId}/store-analysis`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        }).catch(() => {})
       }
     } catch (e) {
       console.warn('Phishing analysis error:', e)
     } finally {
       setRunningPhishing(false)
     }
-  }, [])
+  }, [emailId])
 
   const runFullPipeline = useCallback(async () => {
     setRunningFull(true)
@@ -1193,9 +1201,93 @@ export default function EmailDetail({ emailId, onBack }) {
       if (res.ok) {
         const data = await res.json()
         setEmail(data)
-        if (data.analysis) {
-          setAnalysis(data.analysis)
+
+        // ── Use stored analysis if available (COMPLETED) ────────────────────────
+        // The IMAP worker stores the full 7-module /analyze/phishing result
+        // normalized with keys that map 1-to-1 to what this component renders.
+        // We populate BOTH phishingScores AND analysis from it so every panel
+        // lights up immediately without any API call.
+        const stored = data.analysis
+        if (
+          data.processing_status === 'COMPLETED' &&
+          stored &&
+          typeof stored === 'object' &&
+          // Must have at least one module result stored
+          (stored.distilbert || stored.roberta_ml || stored.rule_based ||
+           stored.overall_score != null || stored.overall_risk_score != null)
+        ) {
+          // Populate phishingScores (for Phishing panel)
+          setPhishingScores({
+            overall_score:       stored.overall_score       ?? stored.overall_risk_score ?? 0,
+            risk_level:          stored.risk_level          || stored.overall_risk_tier  || 'UNKNOWN',
+            risk_emoji:          stored.risk_emoji          || '',
+            recommendation:      stored.recommendation      || 'REVIEW',
+            processing_ms:       stored.processing_ms       || 0,
+            distilbert:          stored.distilbert          || {},
+            roberta_ml:          stored.roberta_ml          || {},
+            rule_based:          stored.rule_based          || {},
+            ai_text:             stored.ai_text             || {},
+            header_analysis:     stored.header_analysis     || {},
+            llm_threat_analysis: stored.llm_threat_analysis || {},
+            credentials:         stored.credentials         || {},
+          })
+
+          // Populate analysis state (for AI-detection / LLM / URL panels)
+          const aiText    = stored.ai_text            || {}
+          const llmThreat = stored.llm_threat_analysis || {}
+          const creds     = stored.credentials         || {}
+          const prob = typeof aiText.probability === 'number'
+            ? aiText.probability
+            : (aiText.score || 0) / 100
+
+          setAnalysis({
+            ...(stored),
+            overall_risk_score: stored.overall_risk_score ?? stored.overall_score ?? 0,
+            overall_risk_tier:  stored.overall_risk_tier  ?? data.risk_tier ?? 'UNKNOWN',
+            processing_ms:      stored.processing_ms || 0,
+            ai_detection: {
+              ai_generated_probability: Math.round(prob * 100) / 100,
+              is_ai_generated: (aiText.verdict || '') !== 'human-written' && prob >= 0.5,
+              method:    aiText.model     || 'llama3:latest',
+              model:     aiText.model     || 'llama3:latest',
+              indicators: Array.isArray(aiText.ai_indicators) ? aiText.ai_indicators : [],
+              verdict:   aiText.verdict   || '',
+              confidence: aiText.confidence || 0,
+            },
+            llm_analysis: {
+              ollama_available:    !llmThreat.error,
+              threat_type:         llmThreat.threat_type          || 'UNKNOWN',
+              urgency_level:       llmThreat.urgency_level        || 'LOW',
+              urgency_score:       llmThreat.risk_score           || 0,
+              summary:             llmThreat.summary              || '',
+              suspicious_phrases:  Array.isArray(llmThreat.specific_threats)
+                                     ? llmThreat.specific_threats : [],
+              social_engineering_tactics: Array.isArray(llmThreat.social_engineering_tactics)
+                                     ? llmThreat.social_engineering_tactics : [],
+              extracted_entities:  { emails: [], accounts: [], phones: [], names: [] },
+              flags:               Array.isArray(llmThreat.social_engineering_tactics)
+                                     ? llmThreat.social_engineering_tactics : [],
+              overall_risk_score:  llmThreat.risk_score           || 0,
+              recommendation:      stored.recommendation          || 'REVIEW',
+              impersonates:        llmThreat.impersonates         || null,
+              error:               llmThreat.error                || undefined,
+            },
+            credentials: {
+              total_findings:      creds.total_findings           || 0,
+              findings:            creds.findings                 || [],
+              risk_score:          creds.risk_score               || 0,
+              risk_label:          creds.sensitive_data_found
+                                     ? 'Sensitive Data Found'
+                                     : (creds.total_findings > 0 ? 'Findings Detected' : 'Clean'),
+              sensitive_data_found: !!creds.sensitive_data_found,
+              human_summary:       creds.sensitive_data_found
+                                     ? 'Sensitive data detected in email content.'
+                                     : 'No credentials or sensitive data detected in email body',
+            },
+          })
         }
+        // If processing_status === 'PROCESSING', do nothing — show analyzing spinner
+        // If COMPLETED but no analysis stored, user can click Re-run manually
       }
     } catch (e) {
       console.warn('Email fetch error:', e)
@@ -1210,8 +1302,6 @@ export default function EmailDetail({ emailId, onBack }) {
       const res = await fetch(`/api/email/emails/${emailId}/analyze`, { method: 'POST' })
       if (res.ok) {
         const newData = await res.json()
-        // Merge: add url_scan / voice_analysis without overwriting Ollama-derived panels
-        // that were already populated from phishingScores (ai_detection, llm_analysis, credentials)
         setAnalysis(prev => ({
           ...(prev || {}),
           ...newData,
@@ -1231,82 +1321,9 @@ export default function EmailDetail({ emailId, onBack }) {
     fetchEmail()
   }, [fetchEmail])
 
-  // Auto-run phishing analysis after email is fetched
-  useEffect(() => {
-    if (email && !phishingScores && !runningPhishing) {
-      runPhishingAnalysis(email)
-    }
-  }, [email, phishingScores, runningPhishing, runPhishingAnalysis])
-
-  // When phishing analysis completes, merge its Ollama-based results into the
-  // analysis state so AI-Generated, LLM Threat, and Credential panels populate
-  // immediately without waiting for the slower per-email analysis endpoint.
-  useEffect(() => {
-    if (!phishingScores) return
-    setAnalysis(prev => {
-      // Don't overwrite if full analysis already populated these keys
-      if (prev?.ai_detection?.model && prev.ai_detection.model !== 'heuristic-fallback') return prev
-
-      const aiText    = phishingScores.ai_text            || {}
-      const llmThreat = phishingScores.llm_threat_analysis || {}
-      const creds     = phishingScores.credentials         || {}
-
-      const prob = typeof aiText.probability === 'number'
-        ? aiText.probability
-        : (aiText.score || 0) / 100
-
-      return {
-        ...(prev || {}),
-        ai_detection: {
-          ai_generated_probability: round2(prob),
-          is_ai_generated: (aiText.verdict || '') !== 'human-written' && prob >= 0.5,
-          method:    aiText.model     || 'llama3:latest',
-          model:     aiText.model     || 'llama3:latest',
-          indicators: Array.isArray(aiText.ai_indicators) ? aiText.ai_indicators : [],
-          verdict:   aiText.verdict   || '',
-          confidence: aiText.confidence || 0,
-        },
-        llm_analysis: {
-          ollama_available:    !llmThreat.error,
-          threat_type:         llmThreat.threat_type          || 'UNKNOWN',
-          urgency_level:       llmThreat.urgency_level        || 'LOW',
-          urgency_score:       llmThreat.risk_score           || 0,
-          summary:             llmThreat.summary              || '',
-          suspicious_phrases:  Array.isArray(llmThreat.specific_threats)
-                                 ? llmThreat.specific_threats : [],
-          social_engineering_tactics: Array.isArray(llmThreat.social_engineering_tactics)
-                                 ? llmThreat.social_engineering_tactics : [],
-          extracted_entities:  { emails: [], accounts: [], phones: [], names: [] },
-          flags:               Array.isArray(llmThreat.social_engineering_tactics)
-                                 ? llmThreat.social_engineering_tactics : [],
-          overall_risk_score:  llmThreat.risk_score           || 0,
-          recommendation:      phishingScores.recommendation  || 'REVIEW',
-          impersonates:        llmThreat.impersonates         || null,
-          error:               llmThreat.error                || undefined,
-        },
-        credentials: {
-          total_findings:      creds.total_findings           || 0,
-          findings:            creds.findings                 || [],
-          risk_score:          creds.risk_score               || 0,
-          risk_label:          creds.sensitive_data_found
-                                 ? 'Sensitive Data Found'
-                                 : (creds.total_findings > 0 ? 'Findings Detected' : 'Clean'),
-          sensitive_data_found: !!creds.sensitive_data_found,
-          human_summary:       creds.sensitive_data_found
-                                 ? 'Sensitive data detected in email content.'
-                                 : 'No credentials or sensitive data detected in email body',
-        },
-      }
-    })
-  }, [phishingScores])
-
-  // After phishing analysis completes, trigger URL scan (runs sequentially
-  // so Ollama is not overloaded with concurrent requests)
-  useEffect(() => {
-    if (phishingScores && !analysis?.url_scan && !analyzing && email) {
-      runAnalysis()
-    }
-  }, [phishingScores, analysis, analyzing, email, runAnalysis])
+  // NOTE: Auto-run useEffects removed.
+  // Analysis is now read from the DB (stored by IMAP worker after first analysis).
+  // Users can still click "Re-run" to force a fresh pipeline execution.
 
   if (loading) {
     return (
@@ -1465,11 +1482,11 @@ export default function EmailDetail({ emailId, onBack }) {
 
           {/* Analysis status bar */}
           <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            analyzing ? 'bg-sky-50 border-sky-200' :
+            (analyzing || email.processing_status === 'PROCESSING') ? 'bg-sky-50 border-sky-200' :
             analysis  ? 'bg-slate-50 border-slate-200' :
             'bg-slate-50 border-slate-200'
           }`}>
-            {analyzing
+            {(analyzing || email.processing_status === 'PROCESSING')
               ? <>
                   <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
                     <RiLoader4Line className="text-sky-500 text-lg" />

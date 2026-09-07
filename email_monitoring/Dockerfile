@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for fitz (PyMuPDF), lxml, etc.
+# System deps (minimal — only what pre-built wheels actually need at runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 libgomp1 gcc g++ \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Install Python deps
 COPY requirements.txt .

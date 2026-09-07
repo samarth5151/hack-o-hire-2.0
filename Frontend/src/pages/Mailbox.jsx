@@ -5,10 +5,10 @@ import {
   RiRefreshLine, RiFilterLine, RiArrowDownSLine, RiArrowUpSLine,
   RiFlagLine, RiFlagFill, RiLoader4Line, RiInboxLine,
   RiShieldCheckLine, RiAlertLine, RiCheckboxCircleLine,
-  RiErrorWarningLine, RiTimeLine, RiSortAsc, RiSortDesc,
+  RiTimeLine, RiSortAsc, RiSortDesc,
   RiArrowLeftLine, RiArrowRightLine, RiMailSendLine,
   RiSpam2Line, RiCheckDoubleLine, RiShieldLine, 
-  RiVirusLine, RiBrainLine, RiGlobalLine,
+  RiVirusLine, RiBrainLine, RiGlobalLine, RiRadarLine,
 } from 'react-icons/ri'
 import { PageWrapper } from '../components/ui'
 
@@ -111,6 +111,62 @@ function ThreatIcon({ threatType, mlClass }) {
   return null
 }
 
+// ── Processing (blurred) email card ───────────────────────────────────────────
+function ProcessingEmailRow({ email }) {
+  const { name } = parseSender(email.sender)
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 0.65, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96, height: 0 }}
+      transition={{ duration: 0.25 }}
+      className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-100 last:border-0
+                 bg-sky-50/40 select-none cursor-not-allowed pointer-events-none filter blur-[0.6px]"
+    >
+      {/* Left accent — pulsing */}
+      <div className="w-1 h-10 rounded-full bg-sky-400 animate-pulse flex-shrink-0" />
+
+      {/* Spinner avatar */}
+      <div className="w-9 h-9 rounded-full bg-sky-100/90 flex items-center justify-center flex-shrink-0">
+        <motion.span
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          className="text-sky-500 text-base"
+        >
+          <RiRadarLine />
+        </motion.span>
+      </div>
+
+      {/* Content — faint blurred preview */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[13px] font-semibold text-slate-700 truncate">
+            {name || 'Incoming Message'}
+          </span>
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold tracking-wide
+                           rounded-full border bg-sky-100 text-sky-700 border-sky-300 flex-shrink-0 animate-pulse">
+            <RiRadarLine className="text-[9px]" /> ANALYZING…
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-slate-600 truncate font-medium">
+            {email.subject || '(no subject)'}
+          </span>
+        </div>
+        {email.sender && (
+          <p className="text-[11px] text-slate-400 mt-0.5 truncate">{email.sender}</p>
+        )}
+      </div>
+
+      {/* Right — live status indicator */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <span className="text-[11px] text-sky-600 font-semibold whitespace-nowrap">Scanning…</span>
+        <div className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Email row ──────────────────────────────────────────────────────────────────
 function EmailRow({ email, onOpen, onFlag, source }) {
   const { name } = parseSender(email.sender)
@@ -209,12 +265,11 @@ function EmailRow({ email, onOpen, onFlag, source }) {
 // ── Empty state ────────────────────────────────────────────────────────────────
 function EmptyState({ filtered, tab }) {
   const msgs = {
-    critical: { title: 'No blocked emails', sub: 'Emails blocked as spam or critical threats appear here.' },
-    high:     { title: 'No high-risk emails', sub: 'Emails marked High risk will appear here.' },
-    medium:   { title: 'No medium-risk emails', sub: 'Suspicious emails appear here.' },
-    low:      { title: 'No safe emails', sub: 'Clean emails appear here.' },
-    default:  { title: filtered ? 'No emails match your filters' : 'Your inbox is empty',
-                sub:   filtered ? 'Try adjusting the filter or search query.' : 'Emails will appear here as they arrive.' },
+    spam:    { title: 'No spam detected', sub: 'Emails classified as spam or threats appear here.' },
+    inbox:   { title: filtered ? 'No emails match your filters' : 'Your inbox is empty',
+               sub:   filtered ? 'Try adjusting the filter or search query.' : 'Emails will appear here as they arrive.' },
+    default: { title: filtered ? 'No emails match your filters' : 'Your inbox is empty',
+               sub:   filtered ? 'Try adjusting the filter or search query.' : 'Emails will appear here as they arrive.' },
   }
   const msg = msgs[tab?.toLowerCase()] || msgs.default
   return (
@@ -228,9 +283,8 @@ function EmptyState({ filtered, tab }) {
 
 // ── Severity tab config ─────────────────────────────────────────────────────────
 const SEVERITY_TABS = [
-  { id: 'inbox',    label: 'Inbox',    icon: <RiInboxLine />,         desc: 'Low & Medium risk emails (default)',   riskFilters: ['LOW', 'MEDIUM'] },
-  { id: 'high',     label: 'High Risk',icon: <RiErrorWarningLine />, desc: 'High risk emails',                     riskFilters: ['HIGH']          },
-  { id: 'critical', label: 'Spam / Blocked', icon: <RiSpam2Line />,  desc: 'Blocked & Critical threat emails',     riskFilters: ['CRITICAL']      },
+  { id: 'inbox', label: 'Inbox', icon: <RiInboxLine />, desc: 'Safe emails & active in-flight analysis', folder: 'inbox' },
+  { id: 'spam',  label: 'Spam',  icon: <RiSpam2Line />,  desc: 'Automated spam & threat detections',     folder: 'spam'  },
 ]
 
 // ── Main Mailbox component ─────────────────────────────────────────────────────
@@ -251,6 +305,8 @@ export default function Mailbox({ onOpenEmail }) {
   const [initialLoaded, setInitialLoaded] = useState(false)
   const [smtpDecisions, setSmtpDecisions] = useState([])
   const [tabCounts, setTabCounts]       = useState({})
+  // SSE state: map of email_id → { subject, sender } for in-flight processing emails
+  const [processingEmails, setProcessingEmails] = useState({})
 
   const PAGE_SIZE = 20
   const inputRef = useRef(null)
@@ -277,19 +333,13 @@ export default function Mailbox({ onOpenEmail }) {
     else if (!initialLoaded) setLoading(true)
 
     const tab = SEVERITY_TABS.find(t => t.id === (opts.tab ?? activeTab)) || currentTab
-    const riskFilters = tab.riskFilters
+    const folder = tab.folder || tab.id
 
     const params = new URLSearchParams({
       limit:  PAGE_SIZE,
       offset: (opts.page ?? page) * PAGE_SIZE,
+      folder: folder,
     })
-    // Build risk filter — pass multiple or a joined string
-    if (riskFilters.length === 1) {
-      params.set('risk_filter', riskFilters[0])
-    } else if (riskFilters.length > 1) {
-      // email-monitor supports risk_filter=LOW,MEDIUM
-      params.set('risk_filter', riskFilters.join(','))
-    }
     if (opts.search ?? search) params.set('search', opts.search ?? search)
     if (opts.unreadOnly ?? unreadOnly) params.set('unread_only', 'true')
     if (opts.flaggedOnly ?? flaggedOnly) params.set('flagged_only', 'true')
@@ -311,9 +361,8 @@ export default function Mailbox({ onOpenEmail }) {
         setStats(st)
         // Build tab counts from stats
         setTabCounts({
-          inbox:    (st.low || 0) + (st.medium || 0),
-          high:     st.high || 0,
-          critical: st.critical || 0,
+          inbox: (st.low || 0) + (st.medium || 0),
+          spam:  (st.critical || 0) + (st.high || 0),
         })
       }
     } catch (e) {
@@ -325,16 +374,124 @@ export default function Mailbox({ onOpenEmail }) {
     }
   }, [page, activeTab, search, unreadOnly, flaggedOnly, initialLoaded, currentTab])
 
-  // Initial fetch + auto-refresh every 10s
+  // Initial fetch + auto-refresh every 5s
   useEffect(() => {
     fetchEmails()
     fetchSmtpDecisions()
     const interval = setInterval(() => {
       fetchEmails({ refresh: true })
       fetchSmtpDecisions()
-    }, 10000)
+    }, 5000)
     return () => clearInterval(interval)
   }, [fetchEmails, fetchSmtpDecisions])
+
+  // ── SSE subscription for real-time PROCESSING / COMPLETED events ──────────
+  useEffect(() => {
+    let es = null
+    let reconnectTimer = null
+
+    const connect = () => {
+      try {
+        es = new EventSource('/api/email/events')
+
+        es.onmessage = (evt) => {
+          try {
+            const event = JSON.parse(evt.data)
+            if (event.type === 'heartbeat') return
+
+            if (event.type === 'email_processing') {
+              // 1. Track in processingEmails map for blurred card rendering
+              setProcessingEmails(prev => ({
+                ...prev,
+                [event.email_id]: {
+                  id:          event.email_id,
+                  subject:     event.subject  || '',
+                  sender:      event.sender   || '',
+                  received_at: event.received_at || new Date().toISOString(),
+                },
+              }))
+              // 2. Insert a stub record at the top of the email list immediately
+              //    so the blurred card appears before the next polling cycle
+              setEmails(prev => {
+                // Don't duplicate if already present
+                if (prev.some(e => e.id === event.email_id)) return prev
+                const stub = {
+                  id:                event.email_id,
+                  subject:           event.subject  || '',
+                  sender:            event.sender   || '',
+                  received_at:       event.received_at || new Date().toISOString(),
+                  processing_status: 'PROCESSING',
+                  risk_tier:         'UNKNOWN',
+                  risk_score:        0,
+                  verdict:           null,
+                  is_read:           false,
+                  is_flagged:        false,
+                  has_attachments:   false,
+                  attachment_count:  0,
+                  body_preview:      '',
+                }
+                return [stub, ...prev]
+              })
+
+            } else if (event.type === 'email_completed' || event.type === 'email_failed') {
+              // Remove from in-flight processing map
+              setProcessingEmails(prev => {
+                const next = { ...prev }
+                delete next[event.email_id]
+                return next
+              })
+
+              const isSpam = event.verdict === 'SPAM'
+
+              // Dynamic Routing:
+              // - In Inbox tab: if classified as SPAM, transition out of Inbox to Spam.
+              // - In Spam tab: if classified as non-spam, transition out of Spam.
+              // - If retained: unblur in-place, display computed risk pill & score, enable clicking.
+              setActiveTab(currentTab => {
+                if (currentTab === 'inbox' && isSpam) {
+                  setEmails(prev => prev.filter(e => e.id !== event.email_id))
+                } else if (currentTab === 'spam' && !isSpam) {
+                  setEmails(prev => prev.filter(e => e.id !== event.email_id))
+                } else {
+                  setEmails(prev => prev.map(e =>
+                    e.id === event.email_id
+                      ? {
+                          ...e,
+                          processing_status: 'COMPLETED',
+                          risk_tier:   event.risk_tier  || e.risk_tier,
+                          risk_score:  event.risk_score ?? e.risk_score,
+                          verdict:     event.verdict    || e.verdict,
+                          folder:      event.folder     || (isSpam ? 'spam' : 'inbox'),
+                        }
+                      : e
+                  ))
+                }
+                return currentTab
+              })
+
+              // Update tab counts & totals
+              setTimeout(() => fetchEmails({ refresh: true }), 1000)
+            }
+          } catch (_) {}
+        }
+
+        es.onerror = () => {
+          es?.close()
+          // Reconnect after 5s
+          reconnectTimer = setTimeout(connect, 5000)
+        }
+      } catch (_) {
+        reconnectTimer = setTimeout(connect, 5000)
+      }
+    }
+
+    connect()
+    return () => {
+      es?.close()
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -401,11 +558,8 @@ export default function Mailbox({ onOpenEmail }) {
           {SEVERITY_TABS.map(tab => {
             const count = tabCounts[tab.id]
             const isActive = activeTab === tab.id
-            const dotColor = {
-              inbox:    'bg-emerald-400',
-              high:     'bg-amber-500',
-              critical: 'bg-red-500',
-            }[tab.id]
+            const dotColor = tab.id === 'spam' ? 'bg-red-500' : 'bg-emerald-400'
+            const activeColor = tab.id === 'spam' ? 'bg-red-500 text-white shadow-sm' : 'bg-sky-500 text-white shadow-sm'
 
             return (
               <button
@@ -414,11 +568,7 @@ export default function Mailbox({ onOpenEmail }) {
                 title={tab.desc}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold transition-all ${
                   isActive
-                    ? tab.id === 'critical'
-                      ? 'bg-red-500 text-white shadow-sm'
-                      : tab.id === 'high'
-                        ? 'bg-amber-500 text-white shadow-sm'
-                        : 'bg-sky-500 text-white shadow-sm'
+                    ? activeColor
                     : 'bg-white text-slate-600 border border-slate-200 hover:border-sky-300 hover:text-sky-600'
                 }`}
               >
@@ -486,16 +636,10 @@ export default function Mailbox({ onOpenEmail }) {
         </div>
 
         {/* Tab description banner */}
-        {activeTab === 'critical' && (
+        {activeTab === 'spam' && (
           <div className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-xl bg-red-50 border border-red-200 text-red-700">
             <RiSpam2Line className="text-red-500 flex-shrink-0" />
-            <span className="text-[12px] font-semibold">Critical & Blocked — Emails flagged as high-threat spam, phishing, BEC, or malware, blocked by the SMTP gateway before delivery.</span>
-          </div>
-        )}
-        {activeTab === 'high' && (
-          <div className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700">
-            <RiAlertLine className="text-amber-500 flex-shrink-0" />
-            <span className="text-[12px] font-semibold">High Risk — Suspicious emails that were quarantined or tagged for review. Exercise caution.</span>
+            <span className="text-[12px] font-semibold">Spam & Malicious Detections — Emails automatically classified as spam, phishing, BEC, or credential threats.</span>
           </div>
         )}
 
@@ -519,19 +663,32 @@ export default function Mailbox({ onOpenEmail }) {
                 <RiRefreshLine /> Try Again
               </button>
             </div>
-          ) : emails.length === 0 ? (
+          ) : emails.length === 0 && Object.keys(processingEmails).length === 0 ? (
             <EmptyState filtered={hasFilters} tab={activeTab} />
           ) : (
-            <div>
-              {emails.map((email) => (
-                <EmailRow
-                  key={email.id}
-                  email={email}
-                  onOpen={handleOpenEmail}
-                  onFlag={handleFlag}
-                  source="inbox"
-                />
-              ))}
+          <div>
+              {/* Processing emails not yet in the emails array — shown at top as overlay */}
+              <AnimatePresence>
+                {Object.values(processingEmails)
+                  .filter(pe => !emails.some(e => e.id === pe.id))
+                  .map(pe => (
+                    <ProcessingEmailRow key={`proc-${pe.id}`} email={pe} />
+                  ))
+                }
+              </AnimatePresence>
+              {emails.map((email) =>
+                email.processing_status === 'PROCESSING' ? (
+                  <ProcessingEmailRow key={email.id} email={email} />
+                ) : (
+                  <EmailRow
+                    key={email.id}
+                    email={email}
+                    onOpen={handleOpenEmail}
+                    onFlag={handleFlag}
+                    source="inbox"
+                  />
+                )
+              )}
             </div>
           )}
         </div>
